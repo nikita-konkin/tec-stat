@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  tec-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: tec-backend:latest
+    container_name: tec-backend
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      # ── Option A: both datasets share one root ─────────────────────────────
+      # Uncomment and set DATA_PATH, leave the per-type mounts commented out.
+      # - ${DATA_PATH:-./data}:/data:ro
+
+      # ── Option B: separate directories for each dataset ────────────────────
+      # Comment out the shared mount above, uncomment these two lines, and set
+      # ABSOLTEC_DATA_PATH and TEC_DATA_PATH in your shell or .env file.
+      - ${ABSOLTEC_DATA_PATH:-./data/absoltec}:/data/absoltec:ro
+      - ${TEC_DATA_PATH:-./data/tec}:/data/tec:ro
+
+    environment:
+      # ── Shared root (Option A) ──────────────────────────────────────────────
+      # When both datasets are under the same directory, set only DATA_ROOT.
+      # Leave the per-type variables unset (or empty) to inherit DATA_ROOT.
+      # DATA_ROOT: /data
+
+      # ── Per-type roots (Option B) ───────────────────────────────────────────
+      # These override DATA_ROOT when set.  Comment them out for Option A.
+      ABSOLTEC_DATA_ROOT: /data/absoltec
+      TEC_DATA_ROOT: /data/tec
+
+      # ── Statistics ──────────────────────────────────────────────────────────
+      DEFAULT_ALPHA: 0.05
+
+      # ── Plots ───────────────────────────────────────────────────────────────
+      PLOT_DPI: 100
+      PLOT_WIDTH_PX: 1200
+      PLOT_HEIGHT_PX: 600
+
+      # ── Server ──────────────────────────────────────────────────────────────
+      WORKERS: 2
+      LOG_LEVEL: info
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
