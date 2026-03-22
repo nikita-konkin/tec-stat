@@ -118,7 +118,7 @@ class TestAbsoltecGlobFiles:
             # doy 002 is intentionally missing
             files = absoltec_glob_files(root, 2026, 1, 3, "aksu")
             assert len(files) == 2
-            doys = {int(f.split("/")[-1].split("_")[1]) for f in files}
+            doys = {int(pathlib.Path(f).stem.split("_")[1]) for f in files}
             assert doys == {1, 3}
 
     def test_empty_result_when_no_data(self):
@@ -194,6 +194,19 @@ class TestFindTecFile:
             path = find_tec_file(root, 2026, 1, "armv", "G12")
             assert path is not None
 
+    def test_extended_station_name_uses_four_letter_folder_root(self):
+        """
+        Regression case:
+          folder: aksu001i14
+          file:   aksui14_G24_001_26.parquet
+        Station from filename is longer than 4 chars, but folder is rooted at
+        the 4-letter station code.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            _touch(root, "2026_parq/001/aksu001i14/aksui14_G24_001_26.parquet")
+            path = find_tec_file(root, 2026, 1, "aksui14", "G24")
+            assert path is not None
+
     def test_missing_returns_none(self):
         with tempfile.TemporaryDirectory() as root:
             assert find_tec_file(root, 2026, 1, "aksu", "E07") is None
@@ -229,6 +242,13 @@ class TestTecGlobSatellites:
                 _touch(root, f"2026_parq/001/aksu0010/aksu_{sat}_001_26.parquet")
             sats = tec_glob_satellites(root, 2026, 1, "aksu")
             assert sats == sorted(sats)
+
+    def test_extended_station_name_uses_four_letter_folder_root(self):
+        with tempfile.TemporaryDirectory() as root:
+            for sat in ["G24", "R10"]:
+                _touch(root, f"2026_parq/001/arsk001m39/arskm39_{sat}_001_26.parquet")
+            sats = tec_glob_satellites(root, 2026, 1, "arskm39")
+            assert set(sats) == {"G24", "R10"}
 
     def test_does_not_include_absoltec_files(self):
         with tempfile.TemporaryDirectory() as root:

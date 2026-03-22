@@ -15,6 +15,7 @@ from typing import Optional, Literal
 
 from app.config import settings
 from app.db.engine import absoltec_discover_stations, tec_discover_stations
+from app.routers.export import ExportFormat, format_payload
 from app.services.tec import list_stations_with_meta
 
 router = APIRouter(prefix="/stations", tags=["Stations"])
@@ -33,6 +34,7 @@ def available_stations(
         ),
     ),
     data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
     """
     Return station codes that have data for the given year/day.
@@ -57,7 +59,7 @@ def available_stations(
         )
         result["all_stations"] = combined
 
-    return result
+    return format_payload(result, format, f"stations_available_{year}_{doy:03d}_{source}")
 
 
 @router.get("/map")
@@ -65,6 +67,7 @@ def station_map(
     year: int = Query(..., ge=2000, le=2100),
     doy: int  = Query(..., ge=1, le=366),
     data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
     """
     Return station metadata (lat, lon, height, ECEF XYZ) for all stations
@@ -75,4 +78,5 @@ def station_map(
     frontend should gracefully skip those markers.
     """
     root = settings.get_tec_root(data_root)
-    return list_stations_with_meta(year, doy, root)
+    payload = list_stations_with_meta(year, doy, root)
+    return format_payload(payload, format, f"stations_map_{year}_{doy:03d}")

@@ -22,6 +22,7 @@ will be None and the world-map feature will skip that station.
 import math
 import os
 import re
+import json
 from typing import Optional
 
 import pandas as pd
@@ -161,6 +162,7 @@ def parse_station_metadata(parquet_path: str, station: str) -> StationMetadata:
         header_text = _read_sidecar_metadata(parquet_path)
 
     if header_text:
+        header_text = _normalize_header_text(header_text)
         return parse_header_text(header_text, station)
 
     return StationMetadata(station=station)
@@ -174,16 +176,56 @@ def _read_embedded_metadata(parquet_path: str) -> Optional[str]:
     try:
         schema = pq.read_schema(parquet_path)
         meta = schema.metadata or {}
-        # pyarrow stores metadata as bytes keys
-        raw = meta.get(b"tec_suite_meta") or meta.get(b"tec_suite_meta\x00")
-        if raw is None:
-            # Some converters use a string key
-            raw = meta.get("tec_suite_meta")
-        if raw:
-            return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        # pyarrow usually stores metadata keys/values as bytes.
+        # Some converters use variant key names; normalize and check broadly.
+        candidate_keys = {
+            "tec_suite_meta",
+            "tec-suite-meta",
+            "tec_meta",
+            "dat_parquet_handler.header_lines",
+            "header",
+            "metadata",
+        }
+
+        for key, raw in meta.items():
+            key_str = key.decode("utf-8", errors="ignore") if isinstance(key, bytes) else str(key)
+            normalized = key_str.strip().lower().replace("\x00", "")
+            if normalized in candidate_keys and raw:
+                text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+                if "Position" in text or "Site:" in text:
+                    return text
+
+        # Last-resort fallback: scan metadata values for header-like content.
+        for raw in meta.values():
+            if not raw:
+                continue
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            if "Position" in text or "Site:" in text:
+                return text
     except Exception:
         pass
     return None
+
+
+def _normalize_header_text(text: str) -> str:
+    """
+    Normalize metadata text into a plain multiline header block.
+
+    Some parquet writers store header lines as a JSON array string, e.g.
+      ["# ...", "# Site: ...", "# Position (L, B, H): ..."]
+    Convert that representation into newline-joined lines so regex parsing works.
+    """
+    stripped = text.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, list):
+                lines = [str(item).strip() for item in parsed if str(item).strip()]
+                if lines:
+                    return "\n".join(lines)
+        except Exception:
+            pass
+    return text
 
 
 def _read_sidecar_metadata(parquet_path: str) -> Optional[str]:
@@ -207,17 +249,18 @@ def _read_sidecar_metadata(parquet_path: str) -> Optional[str]:
 #   # Position (L, B, H): 50.84156264475084, 54.837857328545816, 126.22089951578528
 #   # Position (X, Y, Z): 2324706.1103, 2854596.6353, 5191112.72
 #   # Site: aksu
+_NUM = r"([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)"
 _RE_LBH = re.compile(
-    r"#\s*Position\s*\(L\s*,\s*B\s*,\s*H\s*\)\s*:\s*"
-    r"([\-\d.]+)\s*,\s*([\-\d.]+)\s*,\s*([\-\d.]+)",
+    rf"(?:^|\n)\s*#?\s*Position\s*\(\s*L\s*,\s*B\s*,\s*H\s*\)\s*:\s*"
+    rf"{_NUM}\s*,\s*{_NUM}\s*,\s*{_NUM}",
     re.IGNORECASE,
 )
 _RE_XYZ = re.compile(
-    r"#\s*Position\s*\(X\s*,\s*Y\s*,\s*Z\s*\)\s*:\s*"
-    r"([\-\d.]+)\s*,\s*([\-\d.]+)\s*,\s*([\-\d.]+)",
+    rf"(?:^|\n)\s*#?\s*Position\s*\(\s*X\s*,\s*Y\s*,\s*Z\s*\)\s*:\s*"
+    rf"{_NUM}\s*,\s*{_NUM}\s*,\s*{_NUM}",
     re.IGNORECASE,
 )
-_RE_SITE = re.compile(r"#\s*Site\s*:\s*(\S+)", re.IGNORECASE)
+_RE_SITE = re.compile(r"(?:^|\n)\s*#?\s*Site\s*:\s*(.+?)\s*(?:$|\n)", re.IGNORECASE)
 
 
 def parse_header_text(text: str, station: str) -> StationMetadata:
@@ -243,7 +286,7 @@ def parse_header_text(text: str, station: str) -> StationMetadata:
 
     m = _RE_SITE.search(text)
     if m:
-        site = m.group(1)
+        site = m.group(1).strip()
 
     return StationMetadata(
         station=station,

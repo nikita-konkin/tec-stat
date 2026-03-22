@@ -10,6 +10,7 @@ from typing import Optional
 
 from app.config import settings
 from app.db.engine import absoltec_discover_stations, absoltec_discover_days
+from app.routers.export import ExportFormat, format_payload
 from app.services.absoltec import (
     get_raw_data,
     compute_statistics,
@@ -25,11 +26,13 @@ def list_stations(
     year: int = Query(..., ge=2000, le=2100),
     doy:  int = Query(..., ge=1,    le=366),
     data_root: Optional[str] = Query(None, description="Override ABSOLTEC_DATA_ROOT"),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
     """Discover which stations have AbsolTEC data for a given year/day."""
     root = settings.get_absoltec_root(data_root)
-    return AvailabilityResponse(year=year, doy=doy,
-                                stations=absoltec_discover_stations(root, year, doy))
+    payload = AvailabilityResponse(year=year, doy=doy,
+                                   stations=absoltec_discover_stations(root, year, doy))
+    return format_payload(payload, format, f"absoltec_stations_{year}_{doy:03d}")
 
 
 @router.get("/days", response_model=AvailabilityResponse)
@@ -37,11 +40,13 @@ def list_days(
     year:    int = Query(..., ge=2000, le=2100),
     station: str = Query(..., min_length=2, max_length=9),
     data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
     """List all days-of-year for which a station has data in a given year."""
     root = settings.get_absoltec_root(data_root)
-    return AvailabilityResponse(year=year, station=station,
-                                days=absoltec_discover_days(root, year, station))
+    payload = AvailabilityResponse(year=year, station=station,
+                                   days=absoltec_discover_days(root, year, station))
+    return format_payload(payload, format, f"absoltec_days_{year}_{station.lower()}")
 
 
 @router.get("/raw", response_model=list[TimeSeriesPoint])
@@ -50,9 +55,11 @@ def raw_data(
     doy:     int = Query(..., ge=1,    le=366),
     station: str = Query(..., min_length=2, max_length=9),
     data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
     """Raw 48-point TEC time series for one station/day (all 8 columns)."""
-    return get_raw_data(year, doy, station, settings.get_absoltec_root(data_root))
+    payload = get_raw_data(year, doy, station, settings.get_absoltec_root(data_root))
+    return format_payload(payload, format, f"absoltec_raw_{year}_{doy:03d}_{station.lower()}")
 
 
 @router.get("/statistics", response_model=StatisticsResponse)
@@ -63,12 +70,18 @@ def statistics(
     station:   str   = Query(..., min_length=2, max_length=9),
     alpha:     float = Query(settings.default_alpha, ge=0.001, le=0.5),
     data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
     """Mean ± Student-CI for a station over a day range."""
     if doy_start > doy_end:
         raise HTTPException(422, "doy_start must be ≤ doy_end")
-    return compute_statistics(year, doy_start, doy_end, station, alpha,
-                              settings.get_absoltec_root(data_root))
+    payload = compute_statistics(year, doy_start, doy_end, station, alpha,
+                                 settings.get_absoltec_root(data_root))
+    return format_payload(
+        payload,
+        format,
+        f"absoltec_stats_{year}_{doy_start:03d}_{doy_end:03d}_{station.lower()}",
+    )
 
 
 @router.get("/statistics/per-station-day", response_model=list)
@@ -79,10 +92,16 @@ def statistics_per_station_day(
     stations:  list[str] = Query(...),
     alpha:     float = Query(settings.default_alpha, ge=0.001, le=0.5),
     data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
     """Per-day statistics averaged across a list of stations."""
     if doy_start > doy_end:
         raise HTTPException(422, "doy_start must be ≤ doy_end")
-    return compute_statistics_per_station_day(
+    payload = compute_statistics_per_station_day(
         year, doy_start, doy_end, stations, alpha,
         settings.get_absoltec_root(data_root))
+    return format_payload(
+        payload,
+        format,
+        f"absoltec_stats_per_station_day_{year}_{doy_start:03d}_{doy_end:03d}",
+    )

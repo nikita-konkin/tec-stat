@@ -161,13 +161,24 @@ class TestWhitespaceTolerance:
     def test_site_with_trailing_whitespace(self):
         header = "# Site:   aksu  \n"
         meta = parse_header_text(header, "aksu")
-        # \S+ regex stops at whitespace so trailing spaces are ignored
+        # parser strips surrounding whitespace from site value
         assert meta.site == "aksu"
 
     def test_case_insensitive_position_keyword(self):
         header = "# POSITION (L, B, H): 50.0, 45.0, 200.0"
         meta = parse_header_text(header, "test")
         assert meta.lon == pytest.approx(50.0)
+
+    def test_position_without_hash_prefix(self):
+        header = "Position (L, B, H): 50.0, 45.0, 200.0"
+        meta = parse_header_text(header, "test")
+        assert meta.lon == pytest.approx(50.0)
+        assert meta.lat == pytest.approx(45.0)
+
+    def test_site_without_hash_prefix(self):
+        header = "Site: aksu"
+        meta = parse_header_text(header, "fallback")
+        assert meta.site == "aksu"
 
 
 # ── High-precision coordinate preservation ────────────────────────────────────
@@ -190,3 +201,10 @@ class TestPrecision:
         header = "# Position (X, Y, Z): 2324706.1103, 2854596.6353, 5191112.72"
         meta = parse_header_text(header, "test")
         assert meta.z == pytest.approx(5191112.72, rel=1e-8)
+
+    def test_scientific_notation_values(self):
+        header = "# Position (L, B, H): 5.084156264475084e+01, 5.4837857328545816e+01, 1.2622089951578528e+02"
+        meta = parse_header_text(header, "test")
+        assert meta.lon == pytest.approx(50.84156264475084, rel=1e-10)
+        assert meta.lat == pytest.approx(54.837857328545816, rel=1e-10)
+        assert meta.height == pytest.approx(126.22089951578528, rel=1e-10)

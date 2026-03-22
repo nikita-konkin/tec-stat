@@ -63,11 +63,18 @@ queries quote them (`"UT"`, `"I_v"` …) to respect the exact casing.
 {DATA_ROOT}/
 └── {year}_parq/
     └── {doy:03d}/
-        └── {station}*/
-            └── {station}_{satellite}_{doy:03d}_{year2d}.parquet
+        └── {station_4letter}*/          ← only first 4 letters of station code + any suffix
+            └── {station_full}_{satellite}_{doy:03d}_{year2d}.parquet
 ```
 
-Example: `/data/2026_parq/001/aksu0010/aksu_E07_001_26.parquet`
+Examples:
+- `/data/2026_parq/001/aksu001i14/aksu_E07_001_26.parquet`   ← 4-letter code, folder = `aksu001i14`
+- `/data/2026_parq/001/arsk001m39/arskm39_G24_001_26.parquet` ← extended code `arskm39`, folder starts with `arsk`
+
+**Extended station codes:** When the station code is longer than 4 characters (e.g. `arskm39`,
+`aksui14`), the folder is named with only the **first 4 letters** as the prefix (e.g. `arsk001m39`).
+The service automatically uses the 4-letter prefix for folder discovery and the full code for
+file matching, so both short and extended station codes are resolved correctly.
 
 **Parquet schema** (all lowercase, verified from real files):
 
@@ -93,20 +100,70 @@ TEC-suite header convention — **L = longitude, B = latitude** (Russian geodeti
 # Site: aksu
 ```
 
-The parser reads this from:
-1. Parquet schema metadata key `tec_suite_meta` (preferred — everything in one file).
-2. Sidecar `.meta` text file (fallback for older converters).
+Scientific notation values (e.g. `6.378E+06`) are fully supported in the position fields.
 
-Embed metadata when writing parquet:
+The parser reads this from the embedded Parquet schema metadata. Two key formats are supported:
+
+1. **`dat_parquet_handler.header_lines`** — used by the `dat_parquet_handler` converter.
+   Value is a **JSON array of strings**, one per header line:
+   ```json
+   ["# Created on ...", "# Site: aksu", "# Position (L, B, H): 50.84, 54.83, 126.22", ...]
+   ```
+2. **`tec_suite_meta`** — plain multiline text (older convention).
+
+The service auto-detects the format and decodes accordingly. A last-resort scan of all
+metadata values is performed when neither key is found.
+
+Embed metadata when writing parquet (`dat_parquet_handler` style):
 ```python
-import pyarrow as pa, pyarrow.parquet as pq
+import json, pyarrow as pa, pyarrow.parquet as pq
 
+header_lines = [
+    "# Site: aksu",
+    "# Position (L, B, H): 50.84156, 54.83785, 126.22",
+    "# Position (X, Y, Z): 2324706.11, 2854596.64, 5191112.72",
+]
 schema = pa.schema(
     [("tsn", pa.int32()), ("hour", pa.float64()), ...],
-    metadata={"tec_suite_meta": original_header_text}   # full header as string
+    metadata={"dat_parquet_handler.header_lines": json.dumps(header_lines)}
 )
 pq.write_table(pa.Table.from_pandas(df, schema=schema), "aksu_E07_001_26.parquet")
 ```
+
+---
+
+## Data export formats — JSON, CSV, or XLSX
+
+Every **data-fetch** endpoint (AbsolTEC, TEC-suite, and Stations) accepts a `format` query
+parameter that controls the response format:
+
+| Value  | Content-Type | Response |
+|--------|--------------|----------|
+| `json` | `application/json` (default) | Standard JSON body — same as before |
+| `csv`  | `text/csv` (UTF-8 BOM) | Flat, named-column CSV — download or `pd.read_csv()` |
+| `xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | Excel workbook attachment |
+
+For `csv` and `xlsx` the response includes a `Content-Disposition: attachment; filename="..."` header
+with a descriptive auto-generated filename.
+
+```bash
+# JSON (default)
+curl "http://localhost:8000/tec/stations?year=2026&doy=1"
+
+# CSV download
+curl "http://localhost:8000/tec/stations?year=2026&doy=1&format=csv" -o stations.csv
+
+# Excel download
+curl "http://localhost:8000/absoltec/raw?year=2026&doy=1&station=aksu&format=xlsx" -o aksu.xlsx
+
+# Per-station statistics as CSV
+curl "http://localhost:8000/absoltec/statistics/per-station-day?year=2026&doy_start=1&doy_end=10&stations=aksu,arsk&format=csv"
+```
+
+The CSV/XLSX flattener recursively normalises nested JSON (dicts, lists) into tabular rows.
+Nested-list fields are expanded one row per element; dict fields are dot-separated into individual
+columns using `pd.json_normalize`. A `collection` column is added when a single response contains
+multiple top-level lists (e.g. `/stations/available` with `absoltec_stations` + `tec_stations`).
 
 ---
 
@@ -161,7 +218,7 @@ with only `matplotlib`, `scipy`, and `numpy` installed.
 
 Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 
-### AbsolTEC
+### AbsolTEC (`&format=json|csv|xlsx` on all data endpoints)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -171,7 +228,7 @@ Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 | GET | `/absoltec/statistics?year=&doy_start=&doy_end=&station=&alpha=` | Mean ± CI |
 | GET | `/absoltec/statistics/per-station-day?year=&doy_start=&doy_end=&stations=` | Network average |
 
-### TEC-suite
+### TEC-suite (`&format=json|csv|xlsx` on all data endpoints)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -191,7 +248,7 @@ Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 | GET | `/plots/tec/sky-track` | Polar sky-track (el/az coloured by TEC) |
 | GET | `/plots/tec/all-satellites` | All satellites overlaid |
 
-### Stations / map
+### Stations / map (`&format=json|csv|xlsx` on all data endpoints)
 
 | Method | Path | Description |
 |--------|------|-------------|

@@ -116,6 +116,20 @@ def absoltec_discover_days(data_root: str, year: int, station: str) -> list:
 # TEC-suite helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _tec_station_folder_prefix(station: str) -> str:
+    """
+    Return folder prefix used by TEC-suite day folders.
+
+    Some converters write filenames with extended station codes (e.g. arskm39,
+    aksui14), while day folder names are based on the 4-letter site root plus
+    extra parts (e.g. arsk001m39, aksu001i14). For folder lookup, use only the
+    first 4 letters when the station code is longer than 4.
+    """
+    station_lower = station.lower()
+    if len(station_lower) > 4:
+        return station_lower[:4]
+    return station_lower
+
 def find_tec_file(
     data_root: str, year: int, doy: int, station: str, satellite: str
 ) -> "str | None":
@@ -129,8 +143,9 @@ def find_tec_file(
     doy_dir = os.path.join(data_root, f"{year}_parq", f"{doy:03d}")
     year2d = str(year)[-2:]
     station_lower = station.lower()
+    folder_prefix = _tec_station_folder_prefix(station)
     filename = f"{station_lower}_{satellite}_{doy:03d}_{year2d}.parquet"
-    pattern = os.path.join(doy_dir, f"{station_lower}*", filename)
+    pattern = os.path.join(doy_dir, f"{folder_prefix}*", filename)
     matches = sorted(glob.glob(pattern))
     return matches[0] if matches else None
 
@@ -146,9 +161,10 @@ def tec_glob_satellites(
     """
     year2d = str(year)[-2:]
     station_lower = station.lower()
+    folder_prefix = _tec_station_folder_prefix(station)
     pattern = os.path.join(
         data_root, f"{year}_parq", f"{doy:03d}",
-        f"{station_lower}*",
+        f"{folder_prefix}*",
         f"{station_lower}_*_{doy:03d}_{year2d}.parquet"
     )
     satellites: set = set()
