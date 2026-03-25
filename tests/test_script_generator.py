@@ -112,6 +112,30 @@ def _multi_station_data():
     }
 
 
+def _absoltec_day_by_day_raw_data():
+    return {
+        "plot_type": "absoltec_day_by_day_raw",
+        "title": "AbsolTEC raw day-by-day 2026 DOY 001-003",
+        "xlabel": "Concatenated time [h]",
+        "ylabel": "Value",
+        "figure_width": 12.0,
+        "figure_height": 6.0,
+        "dpi": 100,
+        "metadata": {
+            "year": 2026,
+            "doy_start": 1,
+            "doy_end": 3,
+            "stations": ["aksu", "arsk"],
+            "columns": ["tec", "g_lon"],
+        },
+        "series": {
+            "aksu:tec": {"x": [0.0, 0.5, 24.0], "y": [10.0, 10.2, 11.1]},
+            "arsk:tec": {"x": [0.0, 0.5, 24.0], "y": [12.0, 12.1, 13.0]},
+        },
+        "plot_options": {},
+    }
+
+
 # ── Syntax validity ────────────────────────────────────────────────────────────
 
 class TestSyntaxValidity:
@@ -122,6 +146,7 @@ class TestSyntaxValidity:
         _tec_satellite_data,
         _tec_sky_track_data,
         _multi_station_data,
+        _absoltec_day_by_day_raw_data,
     ])
     def test_parses_as_valid_python(self, data_fn):
         script = generate_script(data_fn())
@@ -170,6 +195,11 @@ class TestDataEmbedding:
         script = generate_script(_multi_station_data())
         assert "aksu" in script
         assert "armv" in script
+
+    def test_day_by_day_raw_series_keys_present(self):
+        script = generate_script(_absoltec_day_by_day_raw_data())
+        assert "aksu:tec" in script
+        assert "arsk:tec" in script
 
 
 # ── Required matplotlib calls ──────────────────────────────────────────────────
@@ -273,6 +303,10 @@ class TestPlotTypeDispatch:
         script = generate_script(data)
         # Must not crash and must be valid Python
         ast.parse(script)
+
+    def test_day_by_day_raw_loops_label_series(self):
+        script = generate_script(_absoltec_day_by_day_raw_data())
+        assert "for label, s in series.items()" in script
 
 
 # ── Settings section ──────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ from app.services.absoltec import (
     compute_statistics,
     compute_statistics_per_station_day,
     get_raw_data,
+    get_raw_data_range,
 )
 from app.services.tec import get_tec_data
 from app.plotting import PlotResult
@@ -36,6 +37,7 @@ router = APIRouter(prefix="/plots", tags=["Plots"])
 
 # Type alias for the three supported formats
 PlotFormat = Literal["png", "json", "script"]
+ABSOLTEC_RAW_COLUMNS = {"tec", "g_lon", "g_lat", "g_q_lon", "g_q_lat", "g_t", "g_q_t"}
 
 
 # ── Format dispatcher ─────────────────────────────────────────────────────────
@@ -184,6 +186,69 @@ def plot_absoltec_per_station_avg(
     if not plots:
         raise HTTPException(404, "Plot generation returned empty result")
     return _respond(plots[0], fmt, f"absoltec_psa_{year}_d{doy:03d}")
+
+
+@router.get("/absoltec/raw/day-by-day")
+def plot_absoltec_raw_day_by_day(
+    year: int      = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int   = Query(..., ge=1, le=366),
+    station: Optional[str] = Query(None, min_length=2, max_length=9),
+    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    columns: Optional[list[str]] = Query(None, description="Columns to plot: tec,g_lon,g_lat,g_q_lon,g_q_lat,g_t,g_q_t"),
+    width_px: int  = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int       = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """
+    Plot AbsolTEC raw data over a day range with a concatenated time axis.
+
+    Supports one station (`station`) or multiple stations (`stations`) and one
+    or multiple raw columns (`columns`).
+    """
+    if doy_start > doy_end:
+        raise HTTPException(422, "doy_start must be ≤ doy_end")
+
+    station_list: list[str] = []
+    if station:
+        station_list.append(station)
+    if stations:
+        station_list.extend(stations)
+    station_list = sorted({s.lower() for s in station_list if s})
+    if not station_list:
+        raise HTTPException(422, "Provide either station or stations")
+
+    selected_columns = [c.lower() for c in (columns or ["tec"])]
+    invalid = sorted({c for c in selected_columns if c not in ABSOLTEC_RAW_COLUMNS})
+    if invalid:
+        raise HTTPException(
+            422,
+            f"Unsupported columns: {', '.join(invalid)}. Allowed: {', '.join(sorted(ABSOLTEC_RAW_COLUMNS))}",
+        )
+
+    rows = get_raw_data_range(
+        year,
+        doy_start,
+        doy_end,
+        station_list,
+        settings.get_absoltec_root(data_root),
+    )
+    if not rows:
+        raise HTTPException(404, "No raw data found for the requested filters")
+
+    plot = ap.plot_day_by_day_columns(
+        rows,
+        year,
+        doy_start,
+        doy_end,
+        selected_columns,
+        width_px,
+        height_px,
+        dpi,
+    )
+    return _respond(plot, fmt, f"absoltec_raw_day_by_day_{year}_{doy_start:03d}_{doy_end:03d}")
 
 
 # ── TEC-suite plots ───────────────────────────────────────────────────────────

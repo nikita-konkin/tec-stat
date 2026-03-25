@@ -13,6 +13,7 @@ from app.db.engine import absoltec_discover_stations, absoltec_discover_days
 from app.routers.export import ExportFormat, format_payload
 from app.services.absoltec import (
     get_raw_data,
+    get_raw_data_range,
     compute_statistics,
     compute_statistics_per_station_day,
 )
@@ -60,6 +61,51 @@ def raw_data(
     """Raw 48-point TEC time series for one station/day (all 8 columns)."""
     payload = get_raw_data(year, doy, station, settings.get_absoltec_root(data_root))
     return format_payload(payload, format, f"absoltec_raw_{year}_{doy:03d}_{station.lower()}")
+
+
+@router.get("/raw/range", response_model=list[dict])
+def raw_data_range(
+    year:      int = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1,    le=366),
+    doy_end:   int = Query(..., ge=1,    le=366),
+    station:   Optional[str] = Query(None, min_length=2, max_length=9),
+    stations:  Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
+):
+    """
+    Raw AbsolTEC rows concatenated day-by-day for one or more stations.
+
+    Time continuity across days is represented by `concat_ut`:
+      concat_ut = (doy - doy_start) * 24 + ut
+    """
+    if doy_start > doy_end:
+        raise HTTPException(422, "doy_start must be ≤ doy_end")
+
+    station_list: list[str] = []
+    if station:
+        station_list.append(station)
+    if stations:
+        station_list.extend(stations)
+    station_list = sorted({s.lower() for s in station_list if s})
+    if not station_list:
+        raise HTTPException(422, "Provide either station or stations")
+
+    payload = get_raw_data_range(
+        year,
+        doy_start,
+        doy_end,
+        station_list,
+        settings.get_absoltec_root(data_root),
+    )
+    filename_stations = "-".join(station_list[:3])
+    if len(station_list) > 3:
+        filename_stations += f"-plus{len(station_list)-3}"
+    return format_payload(
+        payload,
+        format,
+        f"absoltec_raw_range_{year}_{doy_start:03d}_{doy_end:03d}_{filename_stations}",
+    )
 
 
 @router.get("/statistics", response_model=StatisticsResponse)

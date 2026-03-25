@@ -225,6 +225,8 @@ Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 | GET | `/absoltec/stations?year=&doy=` | Available stations |
 | GET | `/absoltec/days?year=&station=` | Available days |
 | GET | `/absoltec/raw?year=&doy=&station=` | Raw 48-point series (all 8 columns) |
+| GET | `/absoltec/raw/range?year=&doy_start=&doy_end=&station=` | Raw rows concatenated by time over day range (single station) |
+| GET | `/absoltec/raw/range?year=&doy_start=&doy_end=&stations=` | Raw rows concatenated by time over day range (multiple stations via repeated `stations`) |
 | GET | `/absoltec/statistics?year=&doy_start=&doy_end=&station=&alpha=` | Mean ± CI |
 | GET | `/absoltec/statistics/per-station-day?year=&doy_start=&doy_end=&stations=` | Network average |
 
@@ -235,6 +237,8 @@ Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 | GET | `/tec/stations?year=&doy=` | Stations + coordinates |
 | GET | `/tec/satellites?year=&doy=&station=` | Available satellites |
 | GET | `/tec/data?year=&doy=&station=&satellite=` | Full observation series |
+| GET | `/tec/raw/range?year=&doy_start=&doy_end=&station=` | Raw TEC rows (all satellites) concatenated over day range |
+| GET | `/tec/raw/range?year=&doy_start=&doy_end=&stations=` | Same as above for multiple stations (repeat `stations`) |
 
 ### Plots (`&format=png|json|script` on all)
 
@@ -243,10 +247,32 @@ Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 | GET | `/plots/absoltec/average` | Mean TEC ± CI over day range |
 | GET | `/plots/absoltec/day` | Single day TEC (optional Savitzky-Golay) |
 | GET | `/plots/absoltec/multi-station` | Multiple stations, one day |
+| GET | `/plots/absoltec/raw/day-by-day` | Raw day-range plot with selectable columns and multi-station overlay |
 | GET | `/plots/absoltec/per-station-averages/{doy}` | Network average for one day |
 | GET | `/plots/tec/satellite` | Satellite TEC time series |
 | GET | `/plots/tec/sky-track` | Polar sky-track (el/az coloured by TEC) |
 | GET | `/plots/tec/all-satellites` | All satellites overlaid |
+
+#### New range/day-by-day examples
+
+```bash
+# AbsolTEC raw range, one station (JSON)
+curl "http://localhost:8000/absoltec/raw/range?year=2026&doy_start=1&doy_end=3&station=aksu"
+
+# AbsolTEC raw range, multiple stations (CSV)
+curl "http://localhost:8000/absoltec/raw/range?year=2026&doy_start=1&doy_end=3&stations=aksu&stations=arsk&format=csv" -o absoltec_range.csv
+
+# TEC raw range, multiple stations (XLSX)
+curl "http://localhost:8000/tec/raw/range?year=2026&doy_start=1&doy_end=2&stations=aksu&stations=arsk&format=xlsx" -o tec_range.xlsx
+
+# AbsolTEC day-by-day raw plot, two stations, two columns
+curl "http://localhost:8000/plots/absoltec/raw/day-by-day?year=2026&doy_start=1&doy_end=4&stations=aksu&stations=arsk&columns=tec&columns=g_lon&format=png" -o day_by_day.png
+```
+
+Notes:
+- AbsolTEC range endpoint adds `concat_ut` where `concat_ut = (doy - doy_start) * 24 + ut`.
+- TEC range endpoint adds `concat_hour` where `concat_hour = (doy - doy_start) * 24 + hour`.
+- Day-by-day plot endpoint supports `columns=tec,g_lon,g_lat,g_q_lon,g_q_lat,g_t,g_q_t` (repeat `columns` query param).
 
 ### Stations / map (`&format=json|csv|xlsx` on all data endpoints)
 

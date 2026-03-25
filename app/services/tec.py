@@ -100,6 +100,49 @@ def get_tec_data(
     )
 
 
+def get_tec_data_range(
+    year: int,
+    doy_start: int,
+    doy_end: int,
+    stations: list[str],
+    data_root: Optional[str] = None,
+) -> list[dict]:
+    """
+    Return raw TEC-suite rows across a day range and station set.
+
+    Includes all satellites available for each station/day and exposes a
+    synthetic continuous time axis:
+      concat_hour = (doy - doy_start) * 24 + hour
+    """
+    root = data_root or settings.data_root
+    rows: list[dict] = []
+
+    for station in stations:
+        station_lower = station.lower()
+        for doy in range(doy_start, doy_end + 1):
+            satellites = tec_glob_satellites(root, year, doy, station_lower)
+            for satellite in satellites:
+                payload = get_tec_data(year, doy, station_lower, satellite, root)
+                for p in payload.points:
+                    rows.append({
+                        "year": year,
+                        "doy": doy,
+                        "station": station_lower,
+                        "satellite": satellite,
+                        "concat_hour": float((doy - doy_start) * 24 + p.hour),
+                        "hour": p.hour,
+                        "tsn": p.tsn,
+                        "el": p.el,
+                        "az": p.az,
+                        "tec_l1l2": p.tec_l1l2,
+                        "tec_c1p2": p.tec_c1p2,
+                        "validity": p.validity,
+                    })
+
+    rows.sort(key=lambda r: (r["station"], r["satellite"], r["concat_hour"]))
+    return rows
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Discovery
 # ──────────────────────────────────────────────────────────────────────────────

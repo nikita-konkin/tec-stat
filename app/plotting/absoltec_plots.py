@@ -321,3 +321,77 @@ def plot_per_station_averages(
         results.append(PlotResult(png=png, data=data))
 
     return results
+
+
+def plot_day_by_day_columns(
+    rows: list[dict],
+    year: int,
+    doy_start: int,
+    doy_end: int,
+    columns: list[str],
+    width_px: int = settings.plot_width_px,
+    height_px: int = settings.plot_height_px,
+    dpi: int = settings.plot_dpi,
+) -> PlotResult:
+    """
+    Plot selected AbsolTEC raw columns over a concatenated multi-day timeline.
+
+    `rows` is expected to contain `concat_ut`, `station`, and requested column
+    values produced by services.absoltec.get_raw_data_range().
+    """
+    fig, ax = _new_fig(width_px, height_px, dpi)
+
+    stations = sorted({str(r.get("station", "")) for r in rows if r.get("station")})
+    include_station_in_label = len(stations) > 1
+
+    series_data: dict[str, dict[str, list[float]]] = {}
+    for station in stations:
+        station_rows = [r for r in rows if r.get("station") == station]
+        for col in columns:
+            x_vals, y_vals = [], []
+            for row in station_rows:
+                val = row.get(col)
+                if val is None:
+                    continue
+                try:
+                    x_vals.append(float(row["concat_ut"]))
+                    y_vals.append(float(val))
+                except (TypeError, ValueError, KeyError):
+                    continue
+
+            if not x_vals:
+                continue
+            label = f"{station}:{col}" if include_station_in_label else col
+            ax.plot(x_vals, y_vals, label=label)
+            series_data[label] = {"x": x_vals, "y": y_vals}
+
+    title = f"AbsolTEC raw day-by-day {year} DOY {doy_start:03d}-{doy_end:03d}"
+    ax.set_title(title, fontsize=13)
+    ax.set_xlabel("Concatenated time [h]", fontsize=13)
+    ax.set_ylabel("Value", fontsize=13)
+    ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
+    ax.minorticks_on()
+    ax.grid(True, which="minor", color="#999999", linestyle="-", alpha=0.2)
+    if series_data:
+        ax.legend(loc="upper left", fontsize=10)
+    png = _render(fig)
+
+    data = {
+        "plot_type": "absoltec_day_by_day_raw",
+        "title": title,
+        "xlabel": "Concatenated time [h]",
+        "ylabel": "Value",
+        "figure_width": width_px / dpi,
+        "figure_height": height_px / dpi,
+        "dpi": dpi,
+        "metadata": {
+            "year": year,
+            "doy_start": doy_start,
+            "doy_end": doy_end,
+            "stations": stations,
+            "columns": columns,
+        },
+        "series": series_data,
+        "plot_options": {},
+    }
+    return PlotResult(png=png, data=data)

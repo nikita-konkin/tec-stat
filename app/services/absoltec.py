@@ -91,6 +91,47 @@ def get_raw_data(
     return points
 
 
+def get_raw_data_range(
+    year: int,
+    doy_start: int,
+    doy_end: int,
+    stations: list[str],
+    data_root: Optional[str] = None,
+) -> list[dict]:
+    """
+    Return raw AbsolTEC rows across a day range and station set.
+
+    Rows are concatenated by time using a synthetic ``concat_ut`` axis so
+    clients can treat the selected day interval as one continuous timeline:
+      concat_ut = (doy - doy_start) * 24 + ut
+    """
+    root = data_root or settings.data_root
+    rows: list[dict] = []
+
+    for station in stations:
+        station_lower = station.lower()
+        for doy in range(doy_start, doy_end + 1):
+            points = get_raw_data(year, doy, station_lower, root)
+            for p in points:
+                rows.append({
+                    "year": year,
+                    "doy": doy,
+                    "station": station_lower,
+                    "concat_ut": float((doy - doy_start) * 24 + p.ut),
+                    "ut": p.ut,
+                    "tec": p.tec,
+                    "g_lon": p.g_lon,
+                    "g_lat": p.g_lat,
+                    "g_q_lon": p.g_q_lon,
+                    "g_q_lat": p.g_q_lat,
+                    "g_t": p.g_t,
+                    "g_q_t": p.g_q_t,
+                })
+
+    rows.sort(key=lambda r: (r["station"], r["concat_ut"]))
+    return rows
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Statistics — single station, range of days
 # ──────────────────────────────────────────────────────────────────────────────
