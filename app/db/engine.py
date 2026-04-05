@@ -7,8 +7,8 @@ Rather than constructing a fixed folder name, every find_* function globs
 for '{station}*' subdirectories and locates the file by its known name.
 
 File naming rules (confirmed from sample data):
-  AbsolTEC  → {year}_parq/{doy:03d}/{station}*/  {station}_{doy:03d}_{year}.parquet
-  TEC-suite → {year}_parq/{doy:03d}/{station}*/  {station}_{sat}_{doy:03d}_{year2d}.parquet
+  AbsolTEC  → {year}/{doy:03d}/{station}*/  {station}_{doy:03d}_{year}.parquet
+  TEC-suite → {year}/{doy:03d}/{station}*/  {station}_{sat}_{doy:03d}_{year2d}.parquet
 
 The folder suffix is intentionally ignored in all path construction.
 """
@@ -50,7 +50,7 @@ def find_absoltec_file(
 
     sorted() makes results deterministic when multiple matching folders exist.
     """
-    doy_dir = os.path.join(data_root, f"{year}_parq", f"{doy:03d}")
+    doy_dir = os.path.join(data_root, f"{year}", f"{doy:03d}")
     station_lower = station.lower()
     filename = f"{station_lower}_{doy:03d}_{year}.parquet"
 
@@ -82,7 +82,7 @@ def absoltec_discover_stations(data_root: str, year: int, doy: int) -> list:
     which distinguishes them from TEC-suite files (4 segments).
     """
     pattern = os.path.join(
-        data_root, f"{year}_parq", f"{doy:03d}", "*",
+        data_root, f"{year}", f"{doy:03d}", "*",
         f"*_{doy:03d}_{year}.parquet"
     )
     stations: set = set()
@@ -97,7 +97,7 @@ def absoltec_discover_days(data_root: str, year: int, station: str) -> list:
     """List all days-of-year for which a station has AbsolTEC data."""
     station_lower = station.lower()
     pattern = os.path.join(
-        data_root, f"{year}_parq", "*",
+        data_root, f"{year}", "*",
         f"{station_lower}*",
         f"{station_lower}_*_{year}.parquet"
     )
@@ -137,14 +137,13 @@ def find_tec_file(
     Locate a TEC-suite satellite parquet file using the same folder-agnostic
     approach as find_absoltec_file.
 
-    File name: {station}_{satellite}_{doy:03d}_{year2d}.parquet
-    Example:   aksu_E07_001_26.parquet
+    File name: {station_prefix}_{satellite}_{doy:03d}_{year2d}.parquet
+    Example:   arsk_G01_001_16.parquet (inside folder arsk0010/)
     """
-    doy_dir = os.path.join(data_root, f"{year}_parq", f"{doy:03d}")
+    doy_dir = os.path.join(data_root, f"{year}", f"{doy:03d}")
     year2d = str(year)[-2:]
-    station_lower = station.lower()
     folder_prefix = _tec_station_folder_prefix(station)
-    filename = f"{station_lower}_{satellite}_{doy:03d}_{year2d}.parquet"
+    filename = f"{folder_prefix}_{satellite}_{doy:03d}_{year2d}.parquet"
     pattern = os.path.join(doy_dir, f"{folder_prefix}*", filename)
     matches = sorted(glob.glob(pattern))
     return matches[0] if matches else None
@@ -160,12 +159,11 @@ def tec_glob_satellites(
     Satellite code is segment index 1.
     """
     year2d = str(year)[-2:]
-    station_lower = station.lower()
     folder_prefix = _tec_station_folder_prefix(station)
     pattern = os.path.join(
-        data_root, f"{year}_parq", f"{doy:03d}",
+        data_root, f"{year}", f"{doy:03d}",
         f"{folder_prefix}*",
-        f"{station_lower}_*_{doy:03d}_{year2d}.parquet"
+        f"{folder_prefix}_*_{doy:03d}_{year2d}.parquet"
     )
     satellites: set = set()
     for path in glob.glob(pattern):
@@ -179,7 +177,7 @@ def tec_discover_stations(data_root: str, year: int, doy: int) -> list:
     """Return station codes that have TEC-suite files for a given year/doy."""
     year2d = str(year)[-2:]
     pattern = os.path.join(
-        data_root, f"{year}_parq", f"{doy:03d}", "*",
+        data_root, f"{year}", f"{doy:03d}", "*",
         f"*_*_{doy:03d}_{year2d}.parquet"
     )
     stations: set = set()
