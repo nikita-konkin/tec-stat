@@ -19,9 +19,15 @@ services:
 
       # ── Option B: separate directories for each dataset ────────────────────
       # Comment out the shared mount above, uncomment these two lines, and set
-      # ABSOLTEC_DATA_PATH and TEC_DATA_PATH in your shell or .env file.
-      - N:/RINEX/abstec_parquet_out:/data/absoltec:ro
-      - N:/RINEX/tecsuite_parquet_out:/data/tec:ro
+      # ABSOLTEC_DATA_ROOT and TEC_DATA_ROOT in your shell or .env file.
+      - type: bind
+        source: ${ABSOLTEC_DATA_ROOT}
+        target: /data/absoltec
+        read_only: true
+      - type: bind
+        source: ${TEC_DATA_ROOT}
+        target: /data/tec
+        read_only: true
 
     environment:
       # ── Shared root (Option A) ──────────────────────────────────────────────
