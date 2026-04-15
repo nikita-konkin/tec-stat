@@ -1,8 +1,13 @@
 # TEC Analysis Backend
 
-HTTP backend for **AbsolTEC** (TayAbsTEC — http://www.gnss-lab.org/tay-abs-tec.html)
-and **TEC-suite** (http://www.gnss-lab.org/tec-suite) data stored as Parquet files.
-Built with FastAPI + DuckDB + matplotlib.
+HTTP backend for **AbsolTEC** (TayAbsTEC — http://www.gnss-lab.org/tay-abs-tec.html),
+**TEC-suite** (http://www.gnss-lab.org/tec-suite), and **CB (Coherence Band)** data
+stored as Parquet files. Built with FastAPI + DuckDB + matplotlib.
+
+CB values are calculated from AbsolTEC data using the formula:
+```
+cb = sqrt(4*3*10^8 * 1^3 * 10^27) / sqrt(80.5 * π * abs_tec * 10^16)
+```
 
 ---
 
@@ -130,6 +135,28 @@ schema = pa.schema(
 pq.write_table(pa.Table.from_pandas(df, schema=schema), "aksu_E07_001_26.parquet")
 ```
 
+### CB (Coherence Band) data
+
+CB values are derived from AbsolTEC data using the physical formula above. The CB endpoints
+use the same data availability as AbsolTEC (same stations, same days), but compute CB
+values on-the-fly from the `I_v` (TEC) column.
+
+**CB schema** (derived from AbsolTEC):
+
+| Column    | Type  | Description                                       |
+|-----------|-------|---------------------------------------------------|
+| `ut`      | float | Universal time in decimal hours [0.0 – 23.5, step 0.5] |
+| `tec`     | float | Original absolute vertical TEC (TECU)             |
+| `cb`      | float | Calculated coherence band value                   |
+| `g_lon`   | float | Sub-ionospheric point (SIP) geographic longitude (°) |
+| `g_lat`   | float | SIP geographic latitude (°)                       |
+| `g_q_lon` | float | Quality indicator for G_lon                       |
+| `g_q_lat` | float | Quality indicator for G_lat                       |
+| `g_t`     | float | TayAbsTEC temporal parameter                      |
+| `g_q_t`   | float | Quality indicator for G_t                         |
+
+CB statistics use the same formulas as AbsolTEC but computed on the derived CB values.
+
 ---
 
 ## Data export formats — JSON, CSV, or XLSX
@@ -230,6 +257,18 @@ Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 | GET | `/absoltec/statistics?year=&doy_start=&doy_end=&station=&alpha=` | Mean ± CI |
 | GET | `/absoltec/statistics/per-station-day?year=&doy_start=&doy_end=&stations=` | Network average |
 
+### CB (Coherence Band) (`&format=json|csv|xlsx` on all data endpoints)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/cb/stations?year=&doy=` | Available stations (same as AbsolTEC) |
+| GET | `/cb/days?year=&station=` | Available days (same as AbsolTEC) |
+| GET | `/cb/raw?year=&doy=&station=` | Raw 48-point CB series (TEC + CB + SIP columns) |
+| GET | `/cb/raw/range?year=&doy_start=&doy_end=&station=` | Raw CB rows concatenated by time over day range (single station) |
+| GET | `/cb/raw/range?year=&doy_start=&doy_end=&stations=` | Raw CB rows concatenated by time over day range (multiple stations via repeated `stations`) |
+| GET | `/cb/statistics?year=&doy_start=&doy_end=&station=&alpha=` | Mean CB ± CI |
+| GET | `/cb/statistics/per-station-day?year=&doy_start=&doy_end=&stations=` | Network CB average |
+
 ### TEC-suite (`&format=json|csv|xlsx` on all data endpoints)
 
 | Method | Path | Description |
@@ -249,6 +288,11 @@ Full interactive docs at `/docs` (Swagger UI) and `/redoc`.
 | GET | `/plots/absoltec/multi-station` | Multiple stations, one day |
 | GET | `/plots/absoltec/raw/day-by-day` | Raw day-range plot with selectable columns and multi-station overlay |
 | GET | `/plots/absoltec/per-station-averages/{doy}` | Network average for one day |
+| GET | `/plots/cb/average` | Mean CB ± CI over day range |
+| GET | `/plots/cb/day` | Single day CB time series |
+| GET | `/plots/cb/multi-station` | Multiple stations CB over day range |
+| GET | `/plots/cb/vs-tec` | Scatter plot of CB vs AbsolTEC values |
+| GET | `/plots/cb/per-station-averages/{doy}` | Network CB average for one day |
 | GET | `/plots/tec/satellite` | Satellite TEC time series |
 | GET | `/plots/tec/sky-track` | Polar sky-track (el/az coloured by TEC) |
 | GET | `/plots/tec/all-satellites` | All satellites overlaid |
@@ -261,6 +305,15 @@ curl "http://localhost:8000/absoltec/raw/range?year=2026&doy_start=1&doy_end=3&s
 
 # AbsolTEC raw range, multiple stations (CSV)
 curl "http://localhost:8000/absoltec/raw/range?year=2026&doy_start=1&doy_end=3&stations=aksu&stations=arsk&format=csv" -o absoltec_range.csv
+
+# CB raw range, one station (JSON)
+curl "http://localhost:8000/cb/raw/range?year=2026&doy_start=1&doy_end=3&station=aksu"
+
+# CB statistics over day range
+curl "http://localhost:8000/cb/statistics?year=2026&doy_start=1&doy_end=10&station=aksu"
+
+# CB vs AbsolTEC scatter plot
+curl "http://localhost:8000/plots/cb/vs-tec?year=2026&doy_start=1&doy_end=10&station=aksu&format=png" -o cb_vs_tec.png
 
 # TEC raw range, multiple stations (XLSX)
 curl "http://localhost:8000/tec/raw/range?year=2026&doy_start=1&doy_end=2&stations=aksu&stations=arsk&format=xlsx" -o tec_range.xlsx
@@ -285,13 +338,13 @@ Notes:
 
 ## Statistics
 
-Exact reproduction of the original `Count_statistics()` formulas:
+Exact reproduction of the original `Count_statistics()` formulas for both AbsolTEC and CB data:
 
 | Metric | Formula |
 |--------|---------|
-| **Mean** | `AVG("I_v")` per time slot across N days |
-| **Variance** | `VAR_POP("I_v")` — population variance (denominator = N) |
-| **Std dev** | `STDDEV_POP("I_v")` |
+| **Mean** | `AVG("I_v")` or `AVG(cb)` per time slot across N days |
+| **Variance** | `VAR_POP("I_v")` or `VAR_POP(cb)` — population variance (denominator = N) |
+| **Std dev** | `STDDEV_POP("I_v")` or `STDDEV_POP(cb)` |
 | **Student CI** | `t_ppf(1 - α/2, df=N-1) × σ / √N` |
 
 Default α = 0.05 (95 % confidence). Override with `?alpha=0.01`.
@@ -327,6 +380,7 @@ Test suite coverage:
 - `test_columns.py` — column name constants and SQL quoting
 - `test_folder_detection.py` — variable-suffix folder discovery (no real parquet needed)
 - `test_statistics.py` — statistics formulas against scipy (no I/O)
+- `test_cb.py` — CB calculation formula and statistics validation
 - `test_metadata_parsing.py` — TEC-suite header parser including L/B convention
 - `test_script_generator.py` — generated Python script validity and content
 
@@ -345,14 +399,17 @@ tec-backend/
 │   ├── models/schemas.py
 │   ├── services/
 │   │   ├── absoltec.py         ← DuckDB queries, statistics, quoted column names
+│   │   ├── cb.py               ← CB calculation and statistics from AbsolTEC data
 │   │   └── tec.py              ← satellite data + metadata parsing (L=lon, B=lat)
 │   ├── plotting/
 │   │   ├── __init__.py         ← PlotResult(png, data) namedtuple
 │   │   ├── absoltec_plots.py
+│   │   ├── cb_plots.py          ← CB plotting functions
 │   │   ├── tec_plots.py
 │   │   └── script_generator.py ← format=script handler
 │   └── routers/
 │       ├── absoltec.py
+│       ├── cb.py               ← CB API endpoints
 │       ├── tec.py
 │       ├── plots.py            ← format=png|json|script dispatch
 │       └── stations.py
@@ -360,6 +417,7 @@ tec-backend/
 │   ├── test_columns.py
 │   ├── test_folder_detection.py
 │   ├── test_statistics.py
+│   ├── test_cb.py              ← CB calculation and statistics tests
 │   ├── test_metadata_parsing.py
 │   └── test_script_generator.py
 ├── Dockerfile

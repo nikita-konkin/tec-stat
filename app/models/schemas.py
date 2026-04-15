@@ -82,6 +82,62 @@ class AvailabilityResponse(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# CB (Coherence Band) schemas — derived from AbsolTEC
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TimeSeriesPointCB(BaseModel):
+    """
+    One 30-minute sample with CB calculated from AbsolTEC.
+
+    CB is calculated as: sqrt(4*3*10^8 * 1^3 * 10^27) / sqrt(80.5 * π * abs_tec * 10^16)
+    """
+    ut:     float = Field(...,  description="Universal time in decimal hours [0, 23.5]")
+    tec:    float = Field(...,  description="Absolute vertical TEC, TECU")
+    cb:     float = Field(...,  description="Coherence Band value")
+    g_lon:  Optional[float] = Field(None, description="SIP geographic longitude (°)")
+    g_lat:  Optional[float] = Field(None, description="SIP geographic latitude (°)")
+    g_q_lon: Optional[float] = Field(None, description="Quality flag for G_lon")
+    g_q_lat: Optional[float] = Field(None, description="Quality flag for G_lat")
+    g_t:    Optional[float] = Field(None, description="TayAbsTEC G_t parameter")
+    g_q_t:  Optional[float] = Field(None, description="Quality flag for G_t")
+
+
+class StatisticsPointCB(BaseModel):
+    """
+    Aggregated statistics for CB values in one 30-minute time slot across N days.
+    """
+    ut:          float = Field(..., description="Universal time in decimal hours")
+    mean_cb:     float = Field(..., description="Mean CB across N days")
+    variance:    float = Field(..., description="Population variance σ²")
+    std_dev:     float = Field(..., description="Standard deviation σ")
+    student_ci:  float = Field(
+        ..., description="Half-width of Student-t CI at the configured alpha. Plot as mean ± student_ci."
+    )
+    n:           int   = Field(..., description="Number of days in this slot's average")
+    mean_g_lon:  Optional[float] = Field(None, description="Mean SIP longitude across N days")
+    mean_g_lat:  Optional[float] = Field(None, description="Mean SIP latitude across N days")
+
+
+class StatisticsResponseCB(BaseModel):
+    year:       int
+    doy_start:  int
+    doy_end:    int
+    station:    str
+    alpha:      float
+    total_days: int = Field(..., description="Days with actual data found in the range")
+    points:     list[StatisticsPointCB]
+
+
+class PerStationStatisticsResponseCB(BaseModel):
+    """Statistics for CB values on one specific day, averaged across multiple stations."""
+    year:           int
+    doy:            int
+    stations_found: list[str]
+    alpha:          float
+    points:         list[StatisticsPointCB]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TEC-suite schemas
 # ──────────────────────────────────────────────────────────────────────────────
 

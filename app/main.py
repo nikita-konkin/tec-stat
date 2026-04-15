@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import absoltec, tec, plots, stations
+from app.routers import absoltec, tec, plots, stations, cb
 
 app = FastAPI(
     title=settings.api_title,
@@ -22,6 +22,15 @@ app = FastAPI(
         "and TEC-suite (http://www.gnss-lab.org/tec-suite) data stored as "
         "parquet files. Uses DuckDB for zero-overhead queries."
     ),
+    openapi_tags=[
+        {"name": "AbsolTEC", "description": "AbsolTEC data endpoints."},
+        {"name": "CB", "description": "Coherence Band data endpoints derived from AbsolTEC."},
+        {"name": "Data Analysis", "description": "Derived data analysis endpoints such as CB."},
+        {"name": "TEC-suite", "description": "TEC-suite data and metadata endpoints."},
+        {"name": "Plots", "description": "Plot generation endpoints for AbsolTEC, CB, and TEC data."},
+        {"name": "Stations", "description": "Station availability and map metadata endpoints."},
+        {"name": "System", "description": "Service health and metadata endpoints."},
+    ],
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -45,6 +54,7 @@ app.include_router(absoltec.router, prefix=prefix)
 app.include_router(tec.router,      prefix=prefix)
 app.include_router(plots.router,    prefix=prefix)
 app.include_router(stations.router, prefix=prefix)
+app.include_router(cb.router,       prefix=prefix)
 
 
 # ---------------------------------------------------------------------------

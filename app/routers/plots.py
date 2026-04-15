@@ -28,10 +28,17 @@ from app.services.absoltec import (
     get_raw_data,
     get_raw_data_range,
 )
+from app.services.cb import (
+    compute_statistics_cb,
+    compute_statistics_per_station_day_cb,
+    get_raw_data_cb,
+    get_raw_data_range_cb,
+)
 from app.services.tec import get_tec_data
 from app.plotting import PlotResult
 from app.plotting import absoltec_plots as ap
 from app.plotting import tec_plots as tp
+from app.plotting import cb_plots as cp
 
 router = APIRouter(prefix="/plots", tags=["Plots"])
 
@@ -249,6 +256,174 @@ def plot_absoltec_raw_day_by_day(
         dpi,
     )
     return _respond(plot, fmt, f"absoltec_raw_day_by_day_{year}_{doy_start:03d}_{doy_end:03d}")
+
+
+# ── CB plots ──────────────────────────────────────────────────────────────────
+
+@router.get("/cb/average")
+def plot_cb_average(
+    year: int      = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int   = Query(..., ge=1, le=366),
+    station: str   = Query(..., min_length=2, max_length=9),
+    alpha: float   = Query(settings.default_alpha, ge=0.001, le=0.5),
+    show_ci:  bool = Query(True,  description="Show Student CI error bars"),
+    show_var: bool = Query(False, description="Show variance error bars"),
+    width_px: int  = Query(settings.plot_width_px, ge=400, le=4000),
+    height_px: int = Query(settings.plot_height_px, ge=300, le=4000),
+    dpi: int       = Query(settings.plot_dpi, ge=72, le=300),
+    fmt: PlotFormat = Query("png", alias="format",
+                             description="Response format: png | json | script"),
+    data_root: Optional[str] = Query(None),
+):
+    """
+    Mean CB averaged across all days in [doy_start, doy_end] for one station,
+    with optional Student CI and variance error bars.
+    """
+    if doy_start > doy_end:
+        raise HTTPException(422, "doy_start must be ≤ doy_end")
+    root   = settings.get_absoltec_root(data_root)
+    result = compute_statistics_cb(year, doy_start, doy_end, station, alpha, root)
+    if not result.points:
+        raise HTTPException(404, f"No data for station={station!r} "
+                                  f"year={year} doy {doy_start}–{doy_end}")
+
+    plot = cp.plot_average_cb(
+        result.points, year, doy_start, doy_end, station,
+        result.total_days, show_ci, show_var, width_px, height_px, dpi,
+    )
+    return _respond(plot, fmt, f"cb_avg_{station}_{year}_d{doy_start}-d{doy_end}")
+
+
+@router.get("/cb/day")
+def plot_cb_day(
+    year: int    = Query(..., ge=2000, le=2100),
+    doy: int     = Query(..., ge=1, le=366),
+    station: str = Query(..., min_length=2, max_length=9),
+    width_px: int  = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int       = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """Raw CB for a single day."""
+    root   = settings.get_absoltec_root(data_root)
+    points = get_raw_data_cb(year, doy, station, root)
+    if not points:
+        raise HTTPException(404, f"No data for station={station!r} year={year} doy={doy}")
+    plot = cp.plot_single_day_cb(points, year, doy, station,
+                                 width_px, height_px, dpi)
+    return _respond(plot, fmt, f"cb_day_{station}_{year}_d{doy:03d}")
+
+
+@router.get("/cb/multi-station")
+def plot_cb_multi_station(
+    year: int      = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int   = Query(..., ge=1, le=366),
+    station: Optional[str] = Query(None, min_length=2, max_length=9),
+    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    width_px: int  = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int       = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """CB time series for multiple stations over a day range."""
+    if doy_start > doy_end:
+        raise HTTPException(422, "doy_start must be ≤ doy_end")
+
+    station_list: list[str] = []
+    if station:
+        station_list.append(station)
+    if stations:
+        station_list.extend(stations)
+    station_list = sorted({s.lower() for s in station_list if s})
+    if not station_list:
+        raise HTTPException(422, "Provide either station or stations")
+
+    rows = get_raw_data_range_cb(
+        year,
+        doy_start,
+        doy_end,
+        station_list,
+        settings.get_absoltec_root(data_root),
+    )
+    if not rows:
+        raise HTTPException(404, "No CB data found for the requested filters")
+
+    plot = cp.plot_multi_station_cb(
+        rows, year, doy_start, doy_end, station_list,
+        width_px, height_px, dpi,
+    )
+    filename_stations = "-".join(station_list[:3])
+    if len(station_list) > 3:
+        filename_stations += f"-plus{len(station_list)-3}"
+    return _respond(plot, fmt, f"cb_multi_{year}_{doy_start:03d}_{doy_end:03d}_{filename_stations}")
+
+
+@router.get("/cb/vs-tec")
+def plot_cb_vs_tec(
+    year: int      = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int   = Query(..., ge=1, le=366),
+    station: str   = Query(..., min_length=2, max_length=9),
+    width_px: int  = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int       = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """Scatter plot of CB vs AbsolTEC values."""
+    rows = get_raw_data_range_cb(
+        year,
+        doy_start,
+        doy_end,
+        [station],
+        settings.get_absoltec_root(data_root),
+    )
+    if not rows:
+        raise HTTPException(404, f"No data for station={station!r} "
+                                  f"year={year} doy {doy_start}–{doy_end}")
+
+    plot = cp.plot_cb_vs_tec(
+        rows, year, doy_start, doy_end, station,
+        width_px, height_px, dpi,
+    )
+    return _respond(plot, fmt, f"cb_vs_tec_{station}_{year}_d{doy_start}-d{doy_end}")
+
+
+@router.get("/cb/per-station-averages/{doy}")
+def plot_cb_per_station_avg(
+    doy: int,
+    year: int      = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int   = Query(..., ge=1, le=366),
+    stations: list[str] = Query(...),
+    alpha: float   = Query(settings.default_alpha),
+    show_ci:  bool = Query(True),
+    show_var: bool = Query(False),
+    width_px: int  = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int       = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """Average CB per station group for a specific day (path parameter)."""
+    root        = settings.get_absoltec_root(data_root)
+    day_results = compute_statistics_per_station_day_cb(
+        year, doy_start, doy_end, stations, alpha, root
+    )
+    day_result = next((r for r in day_results if r.doy == doy), None)
+    if day_result is None or not day_result.points:
+        raise HTTPException(404, f"No data for doy={doy}")
+    plots = cp.plot_per_station_averages_cb(
+        [day_result], year, doy_start, doy_end, stations,
+        width_px, height_px, dpi
+    )
+    if not plots:
+        raise HTTPException(404, "Plot generation returned empty result")
+    return _respond(plots[0], fmt, f"cb_psa_{year}_d{doy:03d}")
 
 
 # ── TEC-suite plots ───────────────────────────────────────────────────────────
