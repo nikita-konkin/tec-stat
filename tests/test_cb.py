@@ -10,7 +10,8 @@ import pytest
 from scipy.stats import t as student_t
 
 from app.db.columns import UT
-from app.services.cb import _calculate_cb, _build_stats_points_cb
+from app.services.cb import _calculate_cb, _build_stats_points_cb, get_raw_data_range_cb
+from app.models.schemas import TimeSeriesPointCB
 
 
 # ── CB calculation tests ──────────────────────────────────────────────────────
@@ -133,3 +134,32 @@ class TestCBIntegration:
 
         # All should be positive
         assert all(cb > 0 for cb in cb_values)
+
+    def test_raw_range_concatenates_days_and_skips_missing_station(self, monkeypatch):
+        def fake_get_raw_data_cb(year, doy, station, data_root=None):
+            if station == "alex" and doy in (1, 2):
+                return [
+                    TimeSeriesPointCB(
+                        ut=0.5,
+                        tec=10.0 + doy,
+                        cb=20.0 + doy,
+                        g_lon=50.0,
+                        g_lat=60.0,
+                        g_q_lon=None,
+                        g_q_lat=None,
+                        g_t=None,
+                        g_q_t=None,
+                    )
+                ]
+            return []
+
+        monkeypatch.setattr("app.services.cb.get_raw_data_cb", fake_get_raw_data_cb)
+
+        rows = get_raw_data_range_cb(2026, 1, 2, ["alex", "alme"], "ignored")
+
+        assert len(rows) == 2
+        assert rows[0]["station"] == "alex"
+        assert rows[0]["doy"] == 1
+        assert rows[0]["concat_ut"] == pytest.approx(0.5)
+        assert rows[1]["doy"] == 2
+        assert rows[1]["concat_ut"] == pytest.approx(24.5)

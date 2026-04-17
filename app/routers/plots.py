@@ -417,13 +417,67 @@ def plot_cb_per_station_avg(
     day_result = next((r for r in day_results if r.doy == doy), None)
     if day_result is None or not day_result.points:
         raise HTTPException(404, f"No data for doy={doy}")
-    plots = cp.plot_per_station_averages_cb(
+    plot = cp.plot_per_station_averages_cb(
         [day_result], year, doy_start, doy_end, stations,
         width_px, height_px, dpi
     )
-    if not plots:
+    if not plot:
         raise HTTPException(404, "Plot generation returned empty result")
-    return _respond(plots[0], fmt, f"cb_psa_{year}_d{doy:03d}")
+    return _respond(plot, fmt, f"cb_psa_{year}_d{doy:03d}")
+
+
+@router.get("/cb/raw/day-by-day")
+def plot_cb_raw_day_by_day(
+    year: int      = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int   = Query(..., ge=1, le=366),
+    station: Optional[str] = Query(None, min_length=2, max_length=9),
+    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    width_px: int  = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int       = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """
+    Plot raw CB data over a day range with a concatenated time axis.
+
+    This is the CB equivalent of /plots/absoltec/raw/day-by-day and uses the
+    same station/stations query conventions.
+    """
+    if doy_start > doy_end:
+        raise HTTPException(422, "doy_start must be â‰¤ doy_end")
+
+    station_list: list[str] = []
+    if station:
+        station_list.append(station)
+    if stations:
+        station_list.extend(stations)
+    station_list = sorted({s.lower() for s in station_list if s})
+    if not station_list:
+        raise HTTPException(422, "Provide either station or stations")
+
+    rows = get_raw_data_range_cb(
+        year,
+        doy_start,
+        doy_end,
+        station_list,
+        settings.get_absoltec_root(data_root),
+    )
+    if not rows:
+        raise HTTPException(404, "No CB raw data found for the requested filters")
+
+    plot = cp.plot_multi_station_cb(
+        rows,
+        year,
+        doy_start,
+        doy_end,
+        station_list,
+        width_px,
+        height_px,
+        dpi,
+    )
+    return _respond(plot, fmt, f"cb_raw_day_by_day_{year}_{doy_start:03d}_{doy_end:03d}")
 
 
 # ── TEC-suite plots ───────────────────────────────────────────────────────────

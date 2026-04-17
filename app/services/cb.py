@@ -151,47 +151,25 @@ def get_raw_data_range_cb(
     all_rows = []
 
     for station in stations:
-        files = absoltec_glob_files(root, year, doy_start, doy_end, station)
-        if not files:
-            continue
-
-        file_list_sql = "[" + ", ".join(f"'{f}'" for f in files) + "]"
-        conn = get_connection()
-        df: pd.DataFrame = conn.execute(f"""
-            SELECT
-                "{UT}",
-                "{I_V}",
-                "{G_LON}",
-                "{G_LAT}",
-                "{G_Q_LON}",
-                "{G_Q_LAT}",
-                "{G_T}",
-                "{G_Q_T}",
-                printf('%04d-%03d', {year}, dayofyear(date_add('day', doy - 1, make_date({year}, 1, 1)))) AS date_str
-            FROM read_parquet({file_list_sql})
-            ORDER BY date_str, "{UT}"
-        """).df()
-
-        for _, row in df.iterrows():
-            tec = float(row[I_V])
-            cb = _calculate_cb(tec)
-            doy = int(row["date_str"].split("-")[1])
-            concat_ut = (doy - doy_start) * 24 + float(row[UT])
-
-            all_rows.append({
-                "station": station,
-                "doy": doy,
-                "ut": float(row[UT]),
-                "concat_ut": concat_ut,
-                "tec": tec,
-                "cb": cb,
-                "g_lon": _opt_float(row.get(G_LON)),
-                "g_lat": _opt_float(row.get(G_LAT)),
-                "g_q_lon": _opt_float(row.get(G_Q_LON)),
-                "g_q_lat": _opt_float(row.get(G_Q_LAT)),
-                "g_t": _opt_float(row.get(G_T)),
-                "g_q_t": _opt_float(row.get(G_Q_T)),
-            })
+        station_lower = station.lower()
+        for doy in range(doy_start, doy_end + 1):
+            points = get_raw_data_cb(year, doy, station_lower, root)
+            for point in points:
+                all_rows.append({
+                    "year": year,
+                    "station": station_lower,
+                    "doy": doy,
+                    "ut": point.ut,
+                    "concat_ut": float((doy - doy_start) * 24 + point.ut),
+                    "tec": point.tec,
+                    "cb": point.cb,
+                    "g_lon": point.g_lon,
+                    "g_lat": point.g_lat,
+                    "g_q_lon": point.g_q_lon,
+                    "g_q_lat": point.g_q_lat,
+                    "g_t": point.g_t,
+                    "g_q_t": point.g_q_t,
+                })
 
     return sorted(all_rows, key=lambda r: (r["station"], r["concat_ut"]))
 
