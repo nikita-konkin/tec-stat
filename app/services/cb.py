@@ -28,6 +28,8 @@ from app.db.engine import (
     find_absoltec_file,
     absoltec_glob_files,
 )
+from app.services.absoltec import get_raw_data as get_absoltec_raw_data
+from app.services.absoltec import get_raw_data_range as get_absoltec_raw_data_range
 from app.models.schemas import (
     TimeSeriesPointCB,
     StatisticsPointCB,
@@ -43,6 +45,11 @@ def _calculate_cb(tec: float) -> float:
     numerator = math.sqrt(4 * 3 * (10 ** 8) * (1 ** 3) * (10 ** 27))
     denominator = math.sqrt(80.5 * math.pi * tec * (10 ** 16))
     return numerator / denominator
+
+
+def calculate_cb(tec: float) -> float:
+    """Public CB helper used by routers/plotting to keep CB formula consistent."""
+    return _calculate_cb(tec)
 
 
 def _opt_float(value) -> Optional[float]:
@@ -96,42 +103,25 @@ def get_raw_data_cb(
     Returns an empty list when the file does not exist.
     """
     root = data_root or settings.data_root
-    path = find_absoltec_file(root, year, doy, station)
-    if path is None:
+    abs_points = get_absoltec_raw_data(year, doy, station, root)
+    if not abs_points:
         return []
 
-    conn = get_connection()
     # Quoted column names are mandatory here: "I_v" ≠ "i_v" in DuckDB
-    df: pd.DataFrame = conn.execute(f"""
-        SELECT
-            "{UT}",
-            "{I_V}",
-            "{G_LON}",
-            "{G_LAT}",
-            "{G_Q_LON}",
-            "{G_Q_LAT}",
-            "{G_T}",
-            "{G_Q_T}"
-        FROM read_parquet('{path}')
-        ORDER BY "{UT}"
-    """).df()
-
-    points = []
-    for _, row in df.iterrows():
-        tec = float(row[I_V])
-        cb = _calculate_cb(tec)
-        points.append(TimeSeriesPointCB(
-            ut=float(row[UT]),
-            tec=tec,
-            cb=cb,
-            g_lon=_opt_float(row.get(G_LON)),
-            g_lat=_opt_float(row.get(G_LAT)),
-            g_q_lon=_opt_float(row.get(G_Q_LON)),
-            g_q_lat=_opt_float(row.get(G_Q_LAT)),
-            g_t=_opt_float(row.get(G_T)),
-            g_q_t=_opt_float(row.get(G_Q_T)),
-        ))
-    return points
+    return [
+        TimeSeriesPointCB(
+            ut=float(p.ut),
+            tec=float(p.tec),
+            cb=calculate_cb(float(p.tec)),
+            g_lon=_opt_float(getattr(p, "g_lon", None)),
+            g_lat=_opt_float(getattr(p, "g_lat", None)),
+            g_q_lon=_opt_float(getattr(p, "g_q_lon", None)),
+            g_q_lat=_opt_float(getattr(p, "g_q_lat", None)),
+            g_t=_opt_float(getattr(p, "g_t", None)),
+            g_q_t=_opt_float(getattr(p, "g_q_t", None)),
+        )
+        for p in abs_points
+    ]
 
 
 def get_raw_data_range_cb(
@@ -147,31 +137,23 @@ def get_raw_data_range_cb(
     Time continuity across days is represented by `concat_ut`:
       concat_ut = (doy - doy_start) * 24 + ut
     """
-    root = data_root or settings.data_root
-    all_rows = []
-
-    for station in stations:
-        station_lower = station.lower()
-        for doy in range(doy_start, doy_end + 1):
-            points = get_raw_data_cb(year, doy, station_lower, root)
-            for point in points:
-                all_rows.append({
-                    "year": year,
-                    "station": station_lower,
-                    "doy": doy,
-                    "ut": point.ut,
-                    "concat_ut": float((doy - doy_start) * 24 + point.ut),
-                    "tec": point.tec,
-                    "cb": point.cb,
-                    "g_lon": point.g_lon,
-                    "g_lat": point.g_lat,
-                    "g_q_lon": point.g_q_lon,
-                    "g_q_lat": point.g_q_lat,
-                    "g_t": point.g_t,
-                    "g_q_t": point.g_q_t,
-                })
-
-    return sorted(all_rows, key=lambda r: (r["station"], r["concat_ut"]))
+    # Reuse AbsolTEC raw range extraction and derive CB from its `tec` values.
+    # This guarantees that if AbsolTEC raw exists, CB raw exists for the same
+    # filters, and keeps the file-discovery/path logic in one place.
+    base_rows = get_absoltec_raw_data_range(
+        year=year,
+        doy_start=doy_start,
+        doy_end=doy_end,
+        stations=stations,
+        data_root=data_root,
+    )
+    for row in base_rows:
+        try:
+            row["cb"] = calculate_cb(float(row["tec"]))
+        except (KeyError, TypeError, ValueError):
+            row["cb"] = 0.0
+    base_rows.sort(key=lambda r: (r.get("station", ""), r.get("concat_ut", 0.0)))
+    return base_rows
 
 
 # ──────────────────────────────────────────────────────────────────────────────

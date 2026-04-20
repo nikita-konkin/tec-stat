@@ -25,6 +25,21 @@ from app.config import settings
 # ── Per-thread DuckDB connection ──────────────────────────────────────────────
 _local = threading.local()
 
+def _candidate_year_dirs(data_root: str, year: int) -> list[str]:
+    """
+    Return candidate year directory names.
+
+    Some datasets are stored as:
+      {root}/{year}/{doy:03d}/...
+    while others use:
+      {root}/{year}_parq/{doy:03d}/...
+    Support both to keep the API compatible across converter outputs.
+    """
+    return [
+        os.path.join(data_root, f"{year}"),
+        os.path.join(data_root, f"{year}_parq"),
+    ]
+
 
 def get_connection() -> duckdb.DuckDBPyConnection:
     """Return a lazily-created, per-thread DuckDB in-memory connection."""
@@ -50,12 +65,14 @@ def find_absoltec_file(
 
     sorted() makes results deterministic when multiple matching folders exist.
     """
-    doy_dir = os.path.join(data_root, f"{year}", f"{doy:03d}")
     station_lower = station.lower()
     filename = f"{station_lower}_{doy:03d}_{year}.parquet"
 
-    pattern = os.path.join(doy_dir, f"{station_lower}*", filename)
-    matches = sorted(glob.glob(pattern))
+    matches: list[str] = []
+    for year_dir in _candidate_year_dirs(data_root, year):
+        pattern = os.path.join(year_dir, f"{doy:03d}", f"{station_lower}*", filename)
+        matches.extend(glob.glob(pattern))
+    matches = sorted(set(matches))
     return matches[0] if matches else None
 
 
@@ -81,34 +98,39 @@ def absoltec_discover_stations(data_root: str, year: int, doy: int) -> list:
     AbsolTEC files have exactly 3 '_'-split stem segments (station_doy_year),
     which distinguishes them from TEC-suite files (4 segments).
     """
-    pattern = os.path.join(
-        data_root, f"{year}", f"{doy:03d}", "*",
-        f"*_{doy:03d}_{year}.parquet"
-    )
+    patterns = [
+        os.path.join(
+            year_dir, f"{doy:03d}", "*", f"*_{doy:03d}_{year}.parquet"
+        )
+        for year_dir in _candidate_year_dirs(data_root, year)
+    ]
     stations: set = set()
-    for path in glob.glob(pattern):
-        parts = Path(path).stem.split("_")
-        if len(parts) == 3:
-            stations.add(parts[0].lower())
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            parts = Path(path).stem.split("_")
+            if len(parts) == 3:
+                stations.add(parts[0].lower())
     return sorted(stations)
 
 
 def absoltec_discover_days(data_root: str, year: int, station: str) -> list:
     """List all days-of-year for which a station has AbsolTEC data."""
     station_lower = station.lower()
-    pattern = os.path.join(
-        data_root, f"{year}", "*",
-        f"{station_lower}*",
-        f"{station_lower}_*_{year}.parquet"
-    )
+    patterns = [
+        os.path.join(
+            year_dir, "*", f"{station_lower}*", f"{station_lower}_*_{year}.parquet"
+        )
+        for year_dir in _candidate_year_dirs(data_root, year)
+    ]
     days: set = set()
-    for path in glob.glob(pattern):
-        parts = Path(path).stem.split("_")
-        if len(parts) == 3:
-            try:
-                days.add(int(parts[1]))
-            except ValueError:
-                pass
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            parts = Path(path).stem.split("_")
+            if len(parts) == 3:
+                try:
+                    days.add(int(parts[1]))
+                except ValueError:
+                    pass
     return sorted(days)
 
 
@@ -140,12 +162,17 @@ def find_tec_file(
     File name: {station_prefix}_{satellite}_{doy:03d}_{year2d}.parquet
     Example:   arsk_G01_001_16.parquet (inside folder arsk0010/)
     """
-    doy_dir = os.path.join(data_root, f"{year}", f"{doy:03d}")
     year2d = str(year)[-2:]
+    station_lower = station.lower()
     folder_prefix = _tec_station_folder_prefix(station)
-    filename = f"{folder_prefix}_{satellite}_{doy:03d}_{year2d}.parquet"
-    pattern = os.path.join(doy_dir, f"{folder_prefix}*", filename)
-    matches = sorted(glob.glob(pattern))
+    filename_prefixes = {folder_prefix, station_lower}
+    matches: list[str] = []
+    for year_dir in _candidate_year_dirs(data_root, year):
+        for filename_prefix in filename_prefixes:
+            filename = f"{filename_prefix}_{satellite}_{doy:03d}_{year2d}.parquet"
+            pattern = os.path.join(year_dir, f"{doy:03d}", f"{folder_prefix}*", filename)
+            matches.extend(glob.glob(pattern))
+    matches = sorted(set(matches))
     return matches[0] if matches else None
 
 
@@ -160,29 +187,41 @@ def tec_glob_satellites(
     """
     year2d = str(year)[-2:]
     folder_prefix = _tec_station_folder_prefix(station)
-    pattern = os.path.join(
-        data_root, f"{year}", f"{doy:03d}",
-        f"{folder_prefix}*",
-        f"{folder_prefix}_*_{doy:03d}_{year2d}.parquet"
-    )
+    station_lower = station.lower()
+    filename_prefixes = {folder_prefix, station_lower}
+    patterns: list[str] = []
+    for year_dir in _candidate_year_dirs(data_root, year):
+        for filename_prefix in filename_prefixes:
+            patterns.append(
+                os.path.join(
+                    year_dir,
+                    f"{doy:03d}",
+                    f"{folder_prefix}*",
+                    f"{filename_prefix}_*_{doy:03d}_{year2d}.parquet",
+                )
+            )
     satellites: set = set()
-    for path in glob.glob(pattern):
-        parts = Path(path).stem.split("_")
-        if len(parts) == 4:
-            satellites.add(parts[1])
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            parts = Path(path).stem.split("_")
+            if len(parts) == 4:
+                satellites.add(parts[1])
     return sorted(satellites)
 
 
 def tec_discover_stations(data_root: str, year: int, doy: int) -> list:
     """Return station codes that have TEC-suite files for a given year/doy."""
     year2d = str(year)[-2:]
-    pattern = os.path.join(
-        data_root, f"{year}", f"{doy:03d}", "*",
-        f"*_*_{doy:03d}_{year2d}.parquet"
-    )
+    patterns = [
+        os.path.join(
+            year_dir, f"{doy:03d}", "*", f"*_*_{doy:03d}_{year2d}.parquet"
+        )
+        for year_dir in _candidate_year_dirs(data_root, year)
+    ]
     stations: set = set()
-    for path in glob.glob(pattern):
-        parts = Path(path).stem.split("_")
-        if len(parts) == 4:
-            stations.add(parts[0].lower())
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            parts = Path(path).stem.split("_")
+            if len(parts) == 4:
+                stations.add(parts[0].lower())
     return sorted(stations)

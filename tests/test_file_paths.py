@@ -1,66 +1,65 @@
 """
-Unit tests for the file-path helper functions in app/db/engine.py.
+Unit tests for the file-discovery helpers in app/db/engine.py.
 
-These tests don't touch the filesystem — they only verify that the
-path-building logic generates the correct strings.
+These tests don't touch the filesystem: they monkeypatch glob() and verify
+that the correct patterns are used and the selection logic is deterministic.
 """
 
-import pytest
-from app.db.engine import (
-    absoltec_file_path,
-    tec_file_path,
-    _absoltec_station_folder,
-)
+import os
+
+from app.db import engine
 
 
-class TestAbsoltecPaths:
+class TestAbsoltecDiscovery:
 
-    def test_station_folder_format(self):
-        """Station folder should be 8 chars: 4-char code + '0010'."""
-        folder = _absoltec_station_folder("aksu")
-        assert folder == "aksu0010"
+    def test_find_absoltec_file_builds_expected_glob_pattern(self, monkeypatch):
+        captured: list[str] = []
 
-    def test_station_folder_uppercased_input(self):
-        folder = _absoltec_station_folder("AKSU")
-        assert folder == "aksu0010"
+        def fake_glob(pattern: str):
+            captured.append(pattern)
+            return []
 
-    def test_station_folder_short_code_padded(self):
-        """Codes shorter than 4 chars should be padded with '0'."""
-        folder = _absoltec_station_folder("arm")
-        assert folder == "arm00010"
+        monkeypatch.setattr(engine.glob, "glob", fake_glob)
 
-    def test_absoltec_file_path_structure(self):
-        path = absoltec_file_path("/data", 2026, 1, "aksu")
-        assert path == "/data/2026_parq/001/aksu0010/aksu_001_2026.parquet"
+        result = engine.find_absoltec_file("/data", 2026, 1, "AKSU")
+        assert result is None
 
-    def test_absoltec_doy_zero_padded(self):
-        path = absoltec_file_path("/data", 2026, 7, "aksu")
-        assert "007" in path
+        expected = {
+            os.path.join("/data", "2026", "001", "aksu*", "aksu_001_2026.parquet"),
+            os.path.join("/data", "2026_parq", "001", "aksu*", "aksu_001_2026.parquet"),
+        }
+        assert set(captured) == expected
 
-    def test_absoltec_doy_three_digits(self):
-        path = absoltec_file_path("/data", 2026, 365, "aksu")
-        assert "365" in path
+    def test_find_absoltec_file_is_deterministic(self, monkeypatch):
+        def fake_glob(_pattern: str):
+            return ["z.parquet", "a.parquet", "m.parquet"]
 
-    def test_absoltec_year_in_filename(self):
-        path = absoltec_file_path("/data", 2026, 1, "aksu")
-        assert "2026" in path.split("/")[-1]
+        monkeypatch.setattr(engine.glob, "glob", fake_glob)
+        assert engine.find_absoltec_file("/data", 2026, 1, "aksu") == "a.parquet"
 
 
-class TestTecPaths:
+class TestTecDiscovery:
 
-    def test_tec_file_path_structure(self):
-        path = tec_file_path("/data", 2026, 1, "aksu", "E07")
-        assert path == "/data/2026_parq/001/aksu0010/aksu_E07_001_26.parquet"
+    def test_tec_station_folder_prefix(self):
+        assert engine._tec_station_folder_prefix("arskm39") == "arsk"
+        assert engine._tec_station_folder_prefix("AKSU") == "aksu"
 
-    def test_tec_year_two_digit(self):
-        """TEC-suite filenames use the 2-digit year."""
-        path = tec_file_path("/data", 2026, 1, "aksu", "G03")
-        assert "_26.parquet" in path
+    def test_find_tec_file_builds_expected_glob_pattern(self, monkeypatch):
+        captured: list[str] = []
 
-    def test_tec_satellite_in_filename(self):
-        path = tec_file_path("/data", 2026, 100, "armv", "R22")
-        assert "_R22_" in path
+        def fake_glob(pattern: str):
+            captured.append(pattern)
+            return []
 
-    def test_tec_doy_zero_padded(self):
-        path = tec_file_path("/data", 2026, 5, "aksu", "E01")
-        assert "/005/" in path
+        monkeypatch.setattr(engine.glob, "glob", fake_glob)
+
+        result = engine.find_tec_file("/data", 2026, 1, "arskm39", "G01")
+        assert result is None
+
+        expected = {
+            os.path.join("/data", "2026", "001", "arsk*", "arsk_G01_001_26.parquet"),
+            os.path.join("/data", "2026_parq", "001", "arsk*", "arsk_G01_001_26.parquet"),
+            os.path.join("/data", "2026", "001", "arsk*", "arskm39_G01_001_26.parquet"),
+            os.path.join("/data", "2026_parq", "001", "arsk*", "arskm39_G01_001_26.parquet"),
+        }
+        assert set(captured) == expected
