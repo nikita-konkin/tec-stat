@@ -20,12 +20,54 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 from scipy.signal import savgol_filter
 
 from app.config import settings
 from app.models.schemas import StatisticsPointCB, TimeSeriesPointCB
 from app.plotting import PlotResult
+
+
+plt.rcParams.update(
+    {
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "axes.titlesize": 15,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
+    }
+)
+
+_TITLE_FS = 15
+_LABEL_FS = 14
+_LEGEND_FS = 12
+
+
+def _format_ut_hours(x: float, _pos: int) -> str:
+    minutes = int(round(float(x) * 60.0))
+    hh = (minutes // 60) % 24
+    mm = minutes % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _apply_concat_time_axis(ax, year: int, doy_start: int):
+    start = datetime.date(year, 1, 1) + datetime.timedelta(days=doy_start - 1)
+
+    def _fmt(x: float, _pos: int) -> str:
+        try:
+            dt = datetime.datetime.combine(start, datetime.time(0, 0)) + datetime.timedelta(hours=float(x))
+        except Exception:
+            return ""
+        return dt.strftime("%d.%m %H:%M")
+
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(6.0))
+    ax.xaxis.set_major_formatter(FuncFormatter(_fmt))
+    for label in ax.get_xticklabels():
+        label.set_rotation(30)
+        label.set_ha("right")
 
 
 # ── Figure helpers ────────────────────────────────────────────────────────────
@@ -35,15 +77,16 @@ def _new_fig(width_px: int, height_px: int, dpi: int):
 
 
 def _style_ax(ax, x_step: float = 2.0, y_step: Optional[float] = None):
-    ax.set_xlabel("Time, UT [h]", fontsize=13)
-    ax.set_ylabel("CB", fontsize=13)
+    ax.set_xlabel("Time, UT [h]", fontsize=_LABEL_FS)
+    ax.set_ylabel("CB", fontsize=_LABEL_FS)
     ax.xaxis.set_major_locator(ticker.MultipleLocator(x_step))
+    ax.xaxis.set_major_formatter(FuncFormatter(_format_ut_hours))
     if y_step:
         ax.yaxis.set_major_locator(ticker.MultipleLocator(y_step))
     ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
     ax.minorticks_on()
     ax.grid(True, which="minor", color="#999999", linestyle="-", alpha=0.2)
-    ax.legend(loc="upper left", fontsize=12)
+    ax.legend(loc="upper left", fontsize=_LEGEND_FS)
 
 
 def _render(fig) -> bytes:
@@ -107,7 +150,7 @@ def plot_average_cb(
         ax.errorbar(ut, mean, yerr=var, fmt="o", capsize=4,
                     label="variance", alpha=0.6, zorder=2)
 
-    ax.set_title(title, fontsize=13)
+    ax.set_title(title, fontsize=_TITLE_FS)
     _style_ax(ax)
     png = _render(fig)
 
@@ -164,7 +207,7 @@ def plot_single_day_cb(
     fig, ax = _new_fig(width_px, height_px, dpi)
     ax.plot(ut, cb, "o-", markersize=4, label="CB")
 
-    ax.set_title(title, fontsize=13)
+    ax.set_title(title, fontsize=_TITLE_FS)
     _style_ax(ax)
     png = _render(fig)
 
@@ -204,14 +247,16 @@ def plot_multi_station_cb(
 
     Each station gets its own line, with time continuity across days.
     """
-    # Group by station
-    station_data = {}
+    # Group by station (Plotly-friendly: each trace as {x: [...], y: [...]}).
+    station_data: dict[str, dict[str, list[float]]] = {}
     for row in data:
-        station = row["station"]
+        station = str(row.get("station", ""))
+        if not station:
+            continue
         if station not in station_data:
-            station_data[station] = {"concat_ut": [], "cb": []}
-        station_data[station]["concat_ut"].append(row["concat_ut"])
-        station_data[station]["cb"].append(row["cb"])
+            station_data[station] = {"x": [], "y": []}
+        station_data[station]["x"].append(float(row["concat_ut"]))
+        station_data[station]["y"].append(float(row["cb"]))
 
     d_start = _doy_to_date(year, doy_start)
     d_end   = _doy_to_date(year, doy_end)
@@ -220,13 +265,14 @@ def plot_multi_station_cb(
     # ── plot ──
     fig, ax = _new_fig(width_px, height_px, dpi)
     for station, series in station_data.items():
-        ax.plot(series["concat_ut"], series["cb"], "o-", markersize=2,
+        ax.plot(series["x"], series["y"], "o-", markersize=2,
                 label=f"{station.upper()}", alpha=0.8)
 
-    ax.set_title(title, fontsize=13)
-    ax.set_xlabel("Time, concatenated UT [h]", fontsize=13)
-    ax.set_ylabel("CB", fontsize=13)
-    ax.legend(loc="upper left", fontsize=10)
+    ax.set_title(title, fontsize=_TITLE_FS)
+    ax.set_xlabel("Time (UTC)", fontsize=_LABEL_FS)
+    ax.set_ylabel("CB", fontsize=_LABEL_FS)
+    _apply_concat_time_axis(ax, year, doy_start)
+    ax.legend(loc="upper left", fontsize=_LEGEND_FS)
     ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
     png = _render(fig)
 
@@ -234,7 +280,7 @@ def plot_multi_station_cb(
     data_dict = {
         "plot_type":    "cb_multi_station",
         "title":        title,
-        "xlabel":       "Time, concatenated UT [h]",
+        "xlabel":       "Time (UTC)",
         "ylabel":       "CB",
         "figure_width":  width_px / dpi,
         "figure_height": height_px / dpi,
@@ -275,9 +321,9 @@ def plot_cb_vs_tec(
     # ── plot ──
     fig, ax = _new_fig(width_px, height_px, dpi)
     ax.scatter(tec_vals, cb_vals, alpha=0.6, s=10)
-    ax.set_xlabel("AbsolTEC, TECU", fontsize=13)
-    ax.set_ylabel("CB", fontsize=13)
-    ax.set_title(title, fontsize=13)
+    ax.set_xlabel("AbsolTEC, TECU", fontsize=_LABEL_FS)
+    ax.set_ylabel("CB", fontsize=_LABEL_FS)
+    ax.set_title(title, fontsize=_TITLE_FS)
     ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
     png = _render(fig)
 
@@ -364,21 +410,28 @@ def plot_per_station_averages_cb(
         ax.errorbar(ut, mean_cb, yerr=ci, fmt=".k", capsize=4,
                     label=f"CI α={response.alpha}", zorder=3)
 
-        ax.set_title(f"{date}", fontsize=10)
-        ax.set_xlabel("UT [h]", fontsize=9)
-        ax.set_ylabel("CB", fontsize=9)
+        ax.set_title(f"{date}", fontsize=11)
+        ax.set_xlabel("UT [h]", fontsize=10)
+        ax.set_ylabel("CB", fontsize=10)
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper left", fontsize=8)
+        ax.legend(loc="upper left", fontsize=10)
 
-        data_dict["series"][f"doy_{response.doy}"] = {
-            "date": date, "ut": ut, "mean_cb": mean_cb, "student_ci": ci,
+        # Plotly-friendly: each day as its own {x: [...], y: [...]} series.
+        data_dict["series"][date] = {
+            "x": ut,
+            "y": mean_cb,
+            "student_ci": ci,
+            "doy": response.doy,
         }
 
     # Hide unused subplots
     for i in range(n_days, len(axes)):
         axes[i].set_visible(False)
 
-    fig.suptitle(f"CB per-station averages {year} DOY {doy_start}-{doy_end}", fontsize=13)
+    fig.suptitle(
+        f"CB per-station averages {year} DOY {doy_start}-{doy_end}",
+        fontsize=_TITLE_FS,
+    )
     plt.tight_layout()
     png = _render(fig)
 

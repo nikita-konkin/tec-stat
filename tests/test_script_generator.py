@@ -116,7 +116,7 @@ def _absoltec_day_by_day_raw_data():
     return {
         "plot_type": "absoltec_day_by_day_raw",
         "title": "AbsolTEC raw day-by-day 2026 DOY 001-003",
-        "xlabel": "Concatenated time [h]",
+        "xlabel": "Time (UTC)",
         "ylabel": "Value",
         "figure_width": 12.0,
         "figure_height": 6.0,

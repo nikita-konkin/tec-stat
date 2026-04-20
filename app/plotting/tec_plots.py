@@ -12,11 +12,41 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 
 from app.config import settings
 from app.models.schemas import TecPoint
 from app.plotting import PlotResult
+
+
+plt.rcParams.update(
+    {
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "axes.titlesize": 15,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
+    }
+)
+
+_TITLE_FS = 15
+_LABEL_FS = 14
+_LEGEND_FS = 12
+
+
+def _format_ut_hours(x: float, _pos: int) -> str:
+    minutes = int(round(float(x) * 60.0))
+    hh = (minutes // 60) % 24
+    mm = minutes % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _apply_ut_axis(ax, x_step: float = 2.0):
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(x_step))
+    ax.xaxis.set_major_formatter(FuncFormatter(_format_ut_hours))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -78,14 +108,14 @@ def plot_satellite(
     title = f"{station.upper()} · {satellite} · DOY {doy:03d}/{year}"
     fig, ax = _new_fig(width_px, height_px, dpi)
     ax.plot(hours, tec, ".", markersize=3, label=f"{satellite} {column}")
-    ax.set_xlabel("Time, UT [h]", fontsize=13)
-    ax.set_ylabel("TEC, TECU",    fontsize=13)
-    ax.set_title(title, fontsize=13)
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+    ax.set_xlabel("Time, UT [h]", fontsize=_LABEL_FS)
+    ax.set_ylabel("TEC, TECU",    fontsize=_LABEL_FS)
+    ax.set_title(title, fontsize=_TITLE_FS)
+    _apply_ut_axis(ax, 2.0)
     ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
     ax.minorticks_on()
     ax.grid(True, which="minor", color="#999999", linestyle="-", alpha=0.2)
-    ax.legend(fontsize=12)
+    ax.legend(fontsize=_LEGEND_FS)
     png = _render(fig)
 
     col_label = "tec_l1l2" if column == "tec_l1l2" else "tec_c1p2"
@@ -212,14 +242,14 @@ def plot_multi_satellite(
         plt.close(fig)
         return _empty_result("No valid observations")
 
-    ax.set_xlabel("Time, UT [h]", fontsize=13)
-    ax.set_ylabel("TEC, TECU",    fontsize=13)
-    ax.set_title(title, fontsize=13)
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+    ax.set_xlabel("Time, UT [h]", fontsize=_LABEL_FS)
+    ax.set_ylabel("TEC, TECU",    fontsize=_LABEL_FS)
+    ax.set_title(title, fontsize=_TITLE_FS)
+    _apply_ut_axis(ax, 2.0)
     ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
     ax.minorticks_on()
     ax.grid(True, which="minor", color="#999999", linestyle="-", alpha=0.2)
-    ax.legend(fontsize=9, ncol=4, loc="upper left")
+    ax.legend(fontsize=10, ncol=4, loc="upper left")
     png = _render(fig)
 
     data = {

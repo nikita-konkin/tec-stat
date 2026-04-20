@@ -20,12 +20,54 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 from scipy.signal import savgol_filter
 
 from app.config import settings
 from app.models.schemas import StatisticsPoint, TimeSeriesPoint
 from app.plotting import PlotResult
+
+
+plt.rcParams.update(
+    {
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "axes.titlesize": 15,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
+    }
+)
+
+_TITLE_FS = 15
+_LABEL_FS = 14
+_LEGEND_FS = 12
+
+
+def _format_ut_hours(x: float, _pos: int) -> str:
+    minutes = int(round(float(x) * 60.0))
+    hh = (minutes // 60) % 24
+    mm = minutes % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _apply_concat_time_axis(ax, year: int, doy_start: int):
+    start = datetime.datetime.strptime(f"{doy_start}.{year}", "%j.%Y")
+
+    def _fmt(x: float, _pos: int) -> str:
+        try:
+            dt = start + datetime.timedelta(hours=float(x))
+        except Exception:
+            return ""
+        return dt.strftime("%d.%m %H:%M")
+
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(6.0))
+    ax.xaxis.set_major_formatter(FuncFormatter(_fmt))
+    for label in ax.get_xticklabels():
+        label.set_rotation(30)
+        label.set_ha("right")
 
 
 # ── Figure helpers ────────────────────────────────────────────────────────────
@@ -35,15 +77,16 @@ def _new_fig(width_px: int, height_px: int, dpi: int):
 
 
 def _style_ax(ax, x_step: float = 2.0, y_step: Optional[float] = None):
-    ax.set_xlabel("Time, UT [h]", fontsize=13)
-    ax.set_ylabel("TEC, TECU", fontsize=13)
+    ax.set_xlabel("Time, UT [h]", fontsize=_LABEL_FS)
+    ax.set_ylabel("TEC, TECU", fontsize=_LABEL_FS)
     ax.xaxis.set_major_locator(ticker.MultipleLocator(x_step))
+    ax.xaxis.set_major_formatter(FuncFormatter(_format_ut_hours))
     if y_step:
         ax.yaxis.set_major_locator(ticker.MultipleLocator(y_step))
     ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
     ax.minorticks_on()
     ax.grid(True, which="minor", color="#999999", linestyle="-", alpha=0.2)
-    ax.legend(loc="upper left", fontsize=12)
+    ax.legend(loc="upper left", fontsize=_LEGEND_FS)
 
 
 def _render(fig) -> bytes:
@@ -104,7 +147,7 @@ def plot_average(
         ax.errorbar(ut, mean, yerr=var, fmt="o", capsize=4,
                     label="variance", alpha=0.6, zorder=2)
 
-    ax.set_title(title, fontsize=13)
+    ax.set_title(title, fontsize=_TITLE_FS)
     _style_ax(ax)
     png = _render(fig)
 
@@ -173,7 +216,7 @@ def plot_single_day(
     else:
         ax.plot(ut, tec, label="TEC")
 
-    ax.set_title(title, fontsize=13)
+    ax.set_title(title, fontsize=_TITLE_FS)
     _style_ax(ax)
     png = _render(fig)
 
@@ -233,7 +276,7 @@ def plot_multi_station(
         ax.plot(ut, tec, label=station)
         series_data[station] = {"ut": ut, "tec": tec}
 
-    ax.set_title(f"{title} · {len(station_series)} stations", fontsize=13)
+    ax.set_title(f"{title} · {len(station_series)} stations", fontsize=_TITLE_FS)
     _style_ax(ax)
     png = _render(fig)
 
@@ -366,20 +409,21 @@ def plot_day_by_day_columns(
             series_data[label] = {"x": x_vals, "y": y_vals}
 
     title = f"AbsolTEC raw day-by-day {year} DOY {doy_start:03d}-{doy_end:03d}"
-    ax.set_title(title, fontsize=13)
-    ax.set_xlabel("Concatenated time [h]", fontsize=13)
-    ax.set_ylabel("Value", fontsize=13)
+    ax.set_title(title, fontsize=_TITLE_FS)
+    ax.set_xlabel("Time (UTC)", fontsize=_LABEL_FS)
+    ax.set_ylabel("Value", fontsize=_LABEL_FS)
+    _apply_concat_time_axis(ax, year, doy_start)
     ax.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
     ax.minorticks_on()
     ax.grid(True, which="minor", color="#999999", linestyle="-", alpha=0.2)
     if series_data:
-        ax.legend(loc="upper left", fontsize=10)
+        ax.legend(loc="upper left", fontsize=_LEGEND_FS)
     png = _render(fig)
 
     data = {
         "plot_type": "absoltec_day_by_day_raw",
         "title": title,
-        "xlabel": "Concatenated time [h]",
+        "xlabel": "Time (UTC)",
         "ylabel": "Value",
         "figure_width": width_px / dpi,
         "figure_height": height_px / dpi,
