@@ -362,6 +362,64 @@ def plot_cb_multi_station(
     return _respond(plot, fmt, f"cb_multi_{year}_{doy_start:03d}_{doy_end:03d}_{filename_stations}")
 
 
+@router.get("/cb/with-absoltec/day-by-day")
+def plot_cb_with_absoltec_day_by_day(
+    year: int      = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int   = Query(..., ge=1, le=366),
+    station: Optional[str] = Query(None, min_length=2, max_length=9),
+    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    width_px: int  = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int       = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """
+    Plot AbsolTEC (TEC) and derived CB on one figure (dual y-axes).
+
+    Uses the same day-by-day station/stations query conventions as:
+      - /plots/absoltec/raw/day-by-day
+      - /plots/cb/raw/day-by-day
+    """
+    if doy_start > doy_end:
+        raise HTTPException(422, "doy_start must be ≤ doy_end")
+
+    station_list: list[str] = []
+    if station:
+        station_list.append(station)
+    if stations:
+        station_list.extend(stations)
+    station_list = sorted({s.lower() for s in station_list if s})
+    if not station_list:
+        raise HTTPException(422, "Provide either station or stations")
+
+    rows = get_raw_data_range_cb(
+        year,
+        doy_start,
+        doy_end,
+        station_list,
+        settings.get_absoltec_root(data_root),
+    )
+    if not rows:
+        raise HTTPException(404, "No data found for the requested filters")
+
+    plot = cp.plot_multi_station_cb_with_absoltec(
+        rows,
+        year,
+        doy_start,
+        doy_end,
+        station_list,
+        width_px,
+        height_px,
+        dpi,
+    )
+    filename_stations = "-".join(station_list[:3])
+    if len(station_list) > 3:
+        filename_stations += f"-plus{len(station_list)-3}"
+    return _respond(plot, fmt, f"tec_cb_{year}_{doy_start:03d}_{doy_end:03d}_{filename_stations}")
+
+
 @router.get("/cb/vs-tec")
 def plot_cb_vs_tec(
     year: int      = Query(..., ge=2000, le=2100),

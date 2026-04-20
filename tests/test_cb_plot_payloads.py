@@ -64,3 +64,22 @@ def test_plot_per_station_averages_cb_returns_plotly_friendly_series():
     assert set(series[first_key].keys()) >= {"x", "y"}
     assert len(series[first_key]["x"]) == len(series[first_key]["y"])
 
+
+def test_plot_multi_station_cb_with_absoltec_includes_dual_axis_plotly_payload():
+    rows = [
+        {"station": "alex", "concat_ut": 0.0, "tec": 10.0, "cb": 2.0},
+        {"station": "alex", "concat_ut": 0.5, "tec": 10.2, "cb": 2.1},
+    ]
+    result = cp.plot_multi_station_cb_with_absoltec(
+        data=rows,
+        year=2026,
+        doy_start=1,
+        doy_end=1,
+        stations=["alex"],
+        width_px=600,
+        height_px=300,
+        dpi=100,
+    )
+    payload = result.data
+    assert isinstance(payload.get("data"), list) and payload["data"]
+    assert payload.get("layout", {}).get("yaxis2", {}).get("overlaying") == "y"

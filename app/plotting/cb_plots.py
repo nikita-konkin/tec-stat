@@ -294,6 +294,151 @@ def plot_multi_station_cb(
     return PlotResult(png=png, data=data_dict)
 
 
+def plot_multi_station_cb_with_absoltec(
+    data: list[dict],
+    year: int,
+    doy_start: int,
+    doy_end: int,
+    stations: list[str],
+    width_px: int = settings.plot_width_px,
+    height_px: int = settings.plot_height_px,
+    dpi: int = settings.plot_dpi,
+) -> PlotResult:
+    """
+    Plot AbsolTEC (TEC) and derived CB on the same time axis.
+
+    Uses two y-axes (left: TEC, right: CB). Supports one or more stations over
+    a day range using concatenated UT hours.
+    """
+    station_data: dict[str, dict[str, list[float]]] = {}
+    for row in data:
+        station = str(row.get("station", ""))
+        if not station:
+            continue
+        try:
+            x = float(row["concat_ut"])
+            tec = float(row["tec"])
+            cb = float(row["cb"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if station not in station_data:
+            station_data[station] = {"x": [], "tec": [], "cb": []}
+        station_data[station]["x"].append(x)
+        station_data[station]["tec"].append(tec)
+        station_data[station]["cb"].append(cb)
+
+    d_start = _doy_to_date(year, doy_start)
+    d_end = _doy_to_date(year, doy_end)
+    title = f"TEC + CB {d_start} to {d_end} — {', '.join(stations).upper()}"
+
+    fig, ax1 = _new_fig(width_px, height_px, dpi)
+    ax2 = ax1.twinx()
+
+    colors = plt.rcParams.get("axes.prop_cycle", None)
+    color_list = colors.by_key().get("color", []) if colors else []
+    if not color_list:
+        color_list = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+
+    for idx, (station, series) in enumerate(sorted(station_data.items())):
+        color = color_list[idx % len(color_list)]
+        ax1.plot(
+            series["x"],
+            series["tec"],
+            "-",
+            linewidth=1.8,
+            color=color,
+            label=f"{station.upper()} TEC",
+            alpha=0.85,
+        )
+        ax2.plot(
+            series["x"],
+            series["cb"],
+            "--",
+            linewidth=1.6,
+            color=color,
+            label=f"{station.upper()} CB",
+            alpha=0.85,
+        )
+
+    ax1.set_title(title, fontsize=_TITLE_FS)
+    ax1.set_xlabel("Time (UTC)", fontsize=_LABEL_FS)
+    ax1.set_ylabel("TEC, TECU", fontsize=_LABEL_FS)
+    ax2.set_ylabel("CB", fontsize=_LABEL_FS)
+    _apply_concat_time_axis(ax1, year, doy_start)
+    ax1.grid(True, which="major", color="#666666", linestyle="-", alpha=0.5)
+    ax1.minorticks_on()
+    ax1.grid(True, which="minor", color="#999999", linestyle="-", alpha=0.2)
+
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    if handles1 or handles2:
+        ax1.legend(
+            handles1 + handles2,
+            labels1 + labels2,
+            loc="upper left",
+            fontsize=_LEGEND_FS,
+            ncol=2,
+        )
+
+    png = _render(fig)
+
+    plotly_traces = []
+    for station, series in sorted(station_data.items()):
+        plotly_traces.append(
+            {
+                "type": "scatter",
+                "mode": "lines",
+                "name": f"{station.upper()} TEC",
+                "x": series["x"],
+                "y": series["tec"],
+            }
+        )
+        plotly_traces.append(
+            {
+                "type": "scatter",
+                "mode": "lines",
+                "name": f"{station.upper()} CB",
+                "x": series["x"],
+                "y": series["cb"],
+                "yaxis": "y2",
+                "line": {"dash": "dash"},
+            }
+        )
+
+    data_dict = {
+        "plot_type": "tec_cb_multi_station",
+        "title": title,
+        "xlabel": "Time (UTC)",
+        "ylabel": "TEC, TECU",
+        "figure_width": width_px / dpi,
+        "figure_height": height_px / dpi,
+        "dpi": dpi,
+        "metadata": {
+            "year": year,
+            "doy_start": doy_start,
+            "doy_end": doy_end,
+            "stations": stations,
+        },
+        # Plotly-first payload for JSON rendering (dual y-axes).
+        "data": plotly_traces,
+        "layout": {
+            "yaxis": {"title": "TEC, TECU"},
+            "yaxis2": {"title": "CB", "overlaying": "y", "side": "right"},
+        },
+        # Script generator / fallback rendering support.
+        "series": {
+            f"{station.upper()} TEC": {"x": series["x"], "y": series["tec"]}
+            for station, series in sorted(station_data.items())
+        }
+        | {
+            f"{station.upper()} CB": {"x": series["x"], "y": series["cb"]}
+            for station, series in sorted(station_data.items())
+        },
+        "plot_options": {},
+    }
+    return PlotResult(png=png, data=data_dict)
+
+
 # ── Plot 4: CB vs AbsolTEC ───────────────────────────────────────────────────
 
 def plot_cb_vs_tec(

@@ -154,3 +154,33 @@ def test_plot_cb_raw_day_by_day_requires_station_or_stations():
     )
 
     assert response.status_code == 422
+
+
+def test_plot_cb_with_absoltec_day_by_day_json(monkeypatch):
+    monkeypatch.setattr(
+        plots_router,
+        "get_raw_data_range_cb",
+        lambda *args, **kwargs: [
+            {"station": "alex", "concat_ut": 0.0, "tec": 10.0, "cb": 2.0},
+            {"station": "alex", "concat_ut": 0.5, "tec": 10.2, "cb": 2.1},
+        ],
+    )
+    monkeypatch.setattr(
+        plots_router.cp,
+        "plot_multi_station_cb_with_absoltec",
+        lambda *args, **kwargs: _plot_result("tec_cb_multi_station"),
+    )
+
+    response = client.get(
+        "/plots/cb/with-absoltec/day-by-day",
+        params=[
+            ("year", 2026),
+            ("doy_start", 1),
+            ("doy_end", 2),
+            ("stations", "alex"),
+            ("format", "json"),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["plot_type"] == "tec_cb_multi_station"
