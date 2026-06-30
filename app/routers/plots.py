@@ -34,17 +34,29 @@ from app.services.cb import (
     get_raw_data_cb,
     get_raw_data_range_cb,
 )
+from app.services.propagation import (
+    compute_statistics_propagation_absoltec,
+    get_raw_data_propagation_absoltec,
+    get_raw_data_propagation_tec,
+    resolve_frequency,
+    SUPPORTED_SIGNAL_BANDS,
+)
 from app.services.tec import get_tec_data
 from app.plotting import PlotResult
 from app.plotting import absoltec_plots as ap
 from app.plotting import tec_plots as tp
 from app.plotting import cb_plots as cp
+from app.plotting import propagation_plots as pp
 
 router = APIRouter(prefix="/plots", tags=["Plots"])
 
 # Type alias for the three supported formats
 PlotFormat = Literal["png", "json", "script"]
 ABSOLTEC_RAW_COLUMNS = {"tec", "g_lon", "g_lat", "g_q_lon", "g_q_lat", "g_t", "g_q_t"}
+SIGNAL_BAND_DESCRIPTION = (
+    "Optional GNSS signal-band preset. Supported: "
+    + ", ".join(SUPPORTED_SIGNAL_BANDS)
+)
 
 
 # ── Format dispatcher ─────────────────────────────────────────────────────────
@@ -77,6 +89,16 @@ def _respond(result: PlotResult, fmt: str, filename_stem: str) -> Response:
         media_type="image/png",
         headers={"Content-Disposition": "inline"},
     )
+
+
+def _resolve_frequency_or_422(
+    f_hz: Optional[float],
+    signal_band: Optional[str],
+) -> tuple[float, Optional[str]]:
+    try:
+        return resolve_frequency(f_hz, signal_band)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 # ── AbsolTEC plots ────────────────────────────────────────────────────────────
@@ -539,6 +561,164 @@ def plot_cb_raw_day_by_day(
 
 
 # ── TEC-suite plots ───────────────────────────────────────────────────────────
+
+@router.get("/propagation/absoltec/average")
+def plot_propagation_absoltec_average(
+    year: int = Query(..., ge=2000, le=2100),
+    doy_start: int = Query(..., ge=1, le=366),
+    doy_end: int = Query(..., ge=1, le=366),
+    station: str = Query(..., min_length=2, max_length=9),
+    metric: Literal["b_k", "gdd"] = Query("b_k"),
+    f_hz: Optional[float] = Query(None, gt=0, description="Working frequency in Hz"),
+    signal_band: Optional[str] = Query(None, description=SIGNAL_BAND_DESCRIPTION),
+    alpha: float = Query(settings.default_alpha, ge=0.001, le=0.5),
+    show_ci: bool = Query(True, description="Show Student CI error bars"),
+    show_var: bool = Query(False, description="Show variance error bars"),
+    width_px: int = Query(settings.plot_width_px, ge=400, le=4000),
+    height_px: int = Query(settings.plot_height_px, ge=300, le=4000),
+    dpi: int = Query(settings.plot_dpi, ge=72, le=300),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """Mean propagation metric averaged across an AbsolTEC day range."""
+    if doy_start > doy_end:
+        raise HTTPException(422, "doy_start must be <= doy_end")
+    resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
+    root = settings.get_absoltec_root(data_root)
+    result = compute_statistics_propagation_absoltec(
+        year=year,
+        doy_start=doy_start,
+        doy_end=doy_end,
+        station=station,
+        f_hz=resolved_f_hz,
+        signal_band=resolved_signal_band,
+        alpha=alpha,
+        data_root=root,
+    )
+    if not result.points:
+        raise HTTPException(404, f"No propagation data for station={station!r} year={year}")
+    plot = pp.plot_average(
+        result.points,
+        year,
+        doy_start,
+        doy_end,
+        station,
+        result.total_days,
+        metric,
+        resolved_f_hz,
+        resolved_signal_band,
+        show_ci,
+        show_var,
+        width_px,
+        height_px,
+        dpi,
+    )
+    return _respond(
+        plot,
+        fmt,
+        f"propagation_absoltec_avg_{metric}_{station}_{year}_{doy_start:03d}_{doy_end:03d}",
+    )
+
+
+@router.get("/propagation/absoltec/day")
+def plot_propagation_absoltec_day(
+    year: int = Query(..., ge=2000, le=2100),
+    doy: int = Query(..., ge=1, le=366),
+    station: str = Query(..., min_length=2, max_length=9),
+    metric: Literal["b_k", "gdd"] = Query("b_k"),
+    f_hz: Optional[float] = Query(None, gt=0, description="Working frequency in Hz"),
+    signal_band: Optional[str] = Query(None, description=SIGNAL_BAND_DESCRIPTION),
+    width_px: int = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """Single-day propagation metric derived from AbsolTEC."""
+    resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
+    root = settings.get_absoltec_root(data_root)
+    points = get_raw_data_propagation_absoltec(
+        year=year,
+        doy=doy,
+        station=station,
+        f_hz=resolved_f_hz,
+        signal_band=resolved_signal_band,
+        data_root=root,
+    )
+    if not points:
+        raise HTTPException(404, f"No propagation data for station={station!r} year={year} doy={doy}")
+    plot = pp.plot_single_day(
+        points,
+        year,
+        doy,
+        station,
+        metric,
+        resolved_f_hz,
+        resolved_signal_band,
+        width_px,
+        height_px,
+        dpi,
+    )
+    return _respond(
+        plot,
+        fmt,
+        f"propagation_absoltec_day_{metric}_{station}_{year}_{doy:03d}",
+    )
+
+
+@router.get("/propagation/tec/satellite")
+def plot_propagation_tec_satellite(
+    year: int = Query(..., ge=2000, le=2100),
+    doy: int = Query(..., ge=1, le=366),
+    station: str = Query(..., min_length=2, max_length=9),
+    satellite: str = Query(..., min_length=2, max_length=4),
+    observable: Literal["tec_l1l2", "tec_c1p2"] = Query("tec_l1l2"),
+    metric: Literal["b_k", "gdd"] = Query("b_k"),
+    valid_only: bool = Query(True),
+    f_hz: Optional[float] = Query(None, gt=0, description="Working frequency in Hz"),
+    signal_band: Optional[str] = Query(None, description=SIGNAL_BAND_DESCRIPTION),
+    width_px: int = Query(settings.plot_width_px),
+    height_px: int = Query(settings.plot_height_px),
+    dpi: int = Query(settings.plot_dpi),
+    fmt: PlotFormat = Query("png", alias="format"),
+    data_root: Optional[str] = Query(None),
+):
+    """Propagation metric for one TEC-suite satellite pass."""
+    resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
+    root = settings.get_tec_root(data_root)
+    result = get_raw_data_propagation_tec(
+        year=year,
+        doy=doy,
+        station=station,
+        satellite=satellite,
+        observable=observable,
+        f_hz=resolved_f_hz,
+        signal_band=resolved_signal_band,
+        data_root=root,
+    )
+    if not result.points:
+        raise HTTPException(404, "No propagation observations found")
+    plot = pp.plot_tec_satellite(
+        result.points,
+        year,
+        doy,
+        station,
+        satellite,
+        observable,
+        metric,
+        valid_only,
+        resolved_f_hz,
+        resolved_signal_band,
+        width_px,
+        height_px,
+        dpi,
+    )
+    return _respond(
+        plot,
+        fmt,
+        f"propagation_tec_{metric}_{station}_{satellite}_{year}_{doy:03d}",
+    )
+
 
 @router.get("/tec/satellite")
 def plot_tec_satellite(

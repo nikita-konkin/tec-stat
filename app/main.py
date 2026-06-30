@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import absoltec, tec, plots, stations, cb
+from app.routers import absoltec, tec, plots, stations, cb, propagation
 
 app = FastAPI(
     title=settings.api_title,
@@ -26,6 +26,7 @@ app = FastAPI(
         {"name": "AbsolTEC", "description": "AbsolTEC data endpoints."},
         {"name": "CB", "description": "Coherence Band data endpoints derived from AbsolTEC."},
         {"name": "Data Analysis", "description": "Derived data analysis endpoints such as CB."},
+        {"name": "Propagation", "description": "Derived propagation-parameter endpoints from TEC and frequency."},
         {"name": "TEC-suite", "description": "TEC-suite data and metadata endpoints."},
         {"name": "Plots", "description": "Plot generation endpoints for AbsolTEC, CB, and TEC data."},
         {"name": "Stations", "description": "Station availability and map metadata endpoints."},
@@ -55,6 +56,7 @@ app.include_router(tec.router,      prefix=prefix)
 app.include_router(plots.router,    prefix=prefix)
 app.include_router(stations.router, prefix=prefix)
 app.include_router(cb.router,       prefix=prefix)
+app.include_router(propagation.router, prefix=prefix)
 
 
 # ---------------------------------------------------------------------------

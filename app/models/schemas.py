@@ -138,6 +138,100 @@ class PerStationStatisticsResponseCB(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Propagation parameter schemas — derived from TEC / AbsolTEC
+# ──────────────────────────────────────────────────────────────────────────────
+
+class PropagationDirectResponse(BaseModel):
+    """
+    Direct propagation-parameter calculation from TEC and working frequency.
+
+    Input TEC is provided in TECU. The derived N_t is returned in electrons/m^2,
+    while B_k and GDD are returned exactly as the implemented physical formulas
+    produce for the supplied SI frequency value.
+    """
+    tec:  float = Field(..., description="Input TEC in TECU")
+    nt:   float = Field(..., description="Absolute total electron content N_t in electrons/m^2")
+    f_hz: float = Field(..., description="Working frequency in Hz")
+    signal_band: Optional[str] = Field(None, description="Resolved signal-band preset used for frequency lookup")
+    b_k:  float = Field(..., description="Coherence bandwidth B_k")
+    gdd:  float = Field(..., description="Group delay dispersion GDD")
+
+
+class PropagationPointAbsoltec(BaseModel):
+    """One AbsolTEC sample with derived propagation parameters."""
+    ut:     float = Field(..., description="Universal time in decimal hours [0, 23.5]")
+    tec:    float = Field(..., description="Absolute vertical TEC, TECU (column I_v)")
+    nt:     Optional[float] = Field(None, description="Absolute total electron content N_t in electrons/m^2")
+    f_hz:   float = Field(..., description="Working frequency in Hz")
+    signal_band: Optional[str] = Field(None, description="Resolved signal-band preset used for frequency lookup")
+    b_k:    Optional[float] = Field(None, description="Coherence bandwidth B_k")
+    gdd:    Optional[float] = Field(None, description="Group delay dispersion GDD")
+    g_lon:  Optional[float] = Field(None, description="SIP geographic longitude (°)")
+    g_lat:  Optional[float] = Field(None, description="SIP geographic latitude (°)")
+    g_q_lon: Optional[float] = Field(None, description="Quality flag for G_lon")
+    g_q_lat: Optional[float] = Field(None, description="Quality flag for G_lat")
+    g_t:    Optional[float] = Field(None, description="TayAbsTEC G_t parameter")
+    g_q_t:  Optional[float] = Field(None, description="Quality flag for G_t")
+
+
+class PropagationStatisticsPoint(BaseModel):
+    """Aggregated propagation statistics for one AbsolTEC time slot across N days."""
+    ut:             float = Field(..., description="Universal time in decimal hours")
+    mean_tec:       float = Field(..., description="Mean TEC across valid samples (TECU)")
+    mean_nt:        float = Field(..., description="Mean absolute total electron content N_t")
+    mean_b_k:       float = Field(..., description="Mean coherence bandwidth B_k")
+    variance_b_k:   float = Field(..., description="Population variance of B_k")
+    std_dev_b_k:    float = Field(..., description="Population standard deviation of B_k")
+    student_ci_b_k: float = Field(..., description="Half-width of Student-t CI for B_k")
+    mean_gdd:       float = Field(..., description="Mean group delay dispersion GDD")
+    variance_gdd:   float = Field(..., description="Population variance of GDD")
+    std_dev_gdd:    float = Field(..., description="Population standard deviation of GDD")
+    student_ci_gdd: float = Field(..., description="Half-width of Student-t CI for GDD")
+    n:              int   = Field(..., description="Number of valid samples in this slot's average")
+    mean_g_lon:     Optional[float] = Field(None, description="Mean SIP longitude across valid samples")
+    mean_g_lat:     Optional[float] = Field(None, description="Mean SIP latitude across valid samples")
+
+
+class PropagationStatisticsResponse(BaseModel):
+    year:       int
+    doy_start:  int
+    doy_end:    int
+    station:    str
+    alpha:      float
+    f_hz:       float
+    signal_band: Optional[str] = None
+    total_days: int = Field(..., description="Days with actual data found in the range")
+    points:     list[PropagationStatisticsPoint]
+
+
+class PropagationTecPoint(BaseModel):
+    """One TEC-suite observation with derived propagation parameters."""
+    tsn:        int   = Field(..., description="Time sequence number")
+    hour:       float = Field(..., description="Time in decimal hours")
+    el:         float = Field(..., description="Satellite elevation (°)")
+    az:         float = Field(..., description="Satellite azimuth (°)")
+    observable: str   = Field(..., description="Selected TEC observable: tec_l1l2 or tec_c1p2")
+    tec:        float = Field(..., description="Selected TEC observable value in TECU")
+    nt:         Optional[float] = Field(None, description="Absolute total electron content N_t in electrons/m^2")
+    f_hz:       float = Field(..., description="Working frequency in Hz")
+    signal_band: Optional[str] = Field(None, description="Resolved signal-band preset used for frequency lookup")
+    b_k:        Optional[float] = Field(None, description="Coherence bandwidth B_k")
+    gdd:        Optional[float] = Field(None, description="Group delay dispersion GDD")
+    validity:   int   = Field(..., description="Quality flag (0 = valid observation)")
+
+
+class PropagationTecResponse(BaseModel):
+    year:       int
+    doy:        int
+    station:    str
+    satellite:  str
+    observable: str
+    f_hz:       float
+    signal_band: Optional[str] = None
+    points:     list[PropagationTecPoint]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TEC-suite schemas
 # ──────────────────────────────────────────────────────────────────────────────
 

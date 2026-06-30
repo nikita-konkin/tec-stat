@@ -119,6 +119,9 @@ def _route_plot_code(
         "absoltec_multi_station":  _code_multi_station,
         "absoltec_day_by_day_raw": _code_absoltec_day_by_day_raw,
         "absoltec_per_station_avg": _code_absoltec_average,   # same shape
+        "propagation_absoltec_average": _code_propagation_average,
+        "propagation_absoltec_day": _code_propagation_series,
+        "propagation_tec_satellite": _code_propagation_series,
         "tec_satellite":           _code_tec_satellite,
         "tec_multi_satellite":     _code_tec_multi_satellite,
         "tec_sky_track":           _code_tec_sky_track,
@@ -195,6 +198,51 @@ def _code_absoltec_day_by_day_raw(series: dict, _options: dict) -> str:
         "# series is a dict: {label: {'x': [...], 'y': [...]}}",
         "for label, s in series.items():",
         "    ax.plot(s['x'], s['y'], label=label)",
+    ]
+    return "\n".join(lines)
+
+
+def _code_propagation_average(series: dict, options: dict) -> str:
+    metric = options.get("metric", "b_k")
+    metric_label = "B_k" if metric == "b_k" else "GDD"
+    mean_key = "mean_b_k" if metric == "b_k" else "mean_gdd"
+    ci_key = "student_ci_b_k" if metric == "b_k" else "student_ci_gdd"
+    variance_key = "variance_b_k" if metric == "b_k" else "variance_gdd"
+    show_ci = options.get("show_student_ci", True)
+    show_var = options.get("show_variance", False)
+
+    lines = [
+        "ut = series['ut']",
+        f"mean = series['{mean_key}']",
+        "",
+        f"ax.plot(ut, mean, '--', label='average {metric_label}')",
+    ]
+    if show_ci:
+        lines += [
+            "",
+            f"ci = series['{ci_key}']",
+            "ax.errorbar(ut, mean, yerr=ci, fmt='.k', capsize=8,",
+            "            label='Student CI', zorder=3)",
+        ]
+    if show_var:
+        lines += [
+            "",
+            f"variance = series['{variance_key}']",
+            "ax.errorbar(ut, mean, yerr=variance, fmt='o', capsize=4,",
+            "            label='variance', alpha=0.6, zorder=2)",
+        ]
+    return "\n".join(lines)
+
+
+def _code_propagation_series(series: dict, options: dict) -> str:
+    metric = options.get("metric", "b_k")
+    metric_label = "B_k" if metric == "b_k" else "GDD"
+    x_key = "hour" if "hour" in series else "ut"
+    lines = [
+        f"x = series['{x_key}']",
+        f"y = series['{metric}']",
+        "",
+        f"ax.plot(x, y, 'o-', markersize=4, label='{metric_label}')",
     ]
     return "\n".join(lines)
 

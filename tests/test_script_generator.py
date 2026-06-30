@@ -138,6 +138,45 @@ def _absoltec_day_by_day_raw_data():
 
 # ── Syntax validity ────────────────────────────────────────────────────────────
 
+def _propagation_average_data():
+    return {
+        "plot_type": "propagation_absoltec_average",
+        "title": "AKSU - B_k 2026-01-01 to 2026-01-03",
+        "xlabel": "Time, UT [h]",
+        "ylabel": "B_k",
+        "figure_width": 12.0,
+        "figure_height": 6.0,
+        "dpi": 100,
+        "metadata": {
+            "year": 2026,
+            "doy_start": 1,
+            "doy_end": 3,
+            "station": "aksu",
+            "metric": "b_k",
+            "f_hz": 1575420000.0,
+            "signal_band": "GPS_L1",
+            "total_days": 3,
+        },
+        "series": {
+            "ut": [0.0, 0.5, 1.0],
+            "mean_tec": [10.0, 10.5, 11.0],
+            "mean_nt": [1.0e17, 1.05e17, 1.1e17],
+            "mean_b_k": [100.0, 99.0, 98.0],
+            "variance_b_k": [4.0, 4.0, 4.0],
+            "std_dev_b_k": [2.0, 2.0, 2.0],
+            "student_ci_b_k": [1.0, 1.0, 1.0],
+            "mean_gdd": [-1.0e-9, -1.1e-9, -1.2e-9],
+            "variance_gdd": [1.0e-20, 1.0e-20, 1.0e-20],
+            "std_dev_gdd": [1.0e-10, 1.0e-10, 1.0e-10],
+            "student_ci_gdd": [5.0e-11, 5.0e-11, 5.0e-11],
+            "n": [3, 3, 3],
+            "mean_g_lon": [54.8, 54.8, 54.8],
+            "mean_g_lat": [50.8, 50.8, 50.8],
+        },
+        "plot_options": {"metric": "b_k", "show_student_ci": True, "show_variance": False},
+    }
+
+
 class TestSyntaxValidity:
     """Every generated script must parse as valid Python 3."""
 
@@ -147,6 +186,7 @@ class TestSyntaxValidity:
         _tec_sky_track_data,
         _multi_station_data,
         _absoltec_day_by_day_raw_data,
+        _propagation_average_data,
     ])
     def test_parses_as_valid_python(self, data_fn):
         script = generate_script(data_fn())
@@ -200,6 +240,11 @@ class TestDataEmbedding:
         script = generate_script(_absoltec_day_by_day_raw_data())
         assert "aksu:tec" in script
         assert "arsk:tec" in script
+
+    def test_propagation_metric_keys_present(self):
+        script = generate_script(_propagation_average_data())
+        assert "mean_b_k" in script
+        assert "student_ci_b_k" in script
 
 
 # ── Required matplotlib calls ──────────────────────────────────────────────────
@@ -256,6 +301,11 @@ class TestPlotTypeDispatch:
         assert "variance" in script
         # Two errorbar calls expected: one for CI, one for variance
         assert script.count("errorbar") == 2
+
+    def test_propagation_average_uses_metric_specific_series(self):
+        script = generate_script(_propagation_average_data())
+        assert "mean_b_k" in script
+        assert "Student CI" in script
 
     def test_single_day_smooth_uses_savgol(self):
         data = {
