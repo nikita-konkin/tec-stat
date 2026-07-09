@@ -8,11 +8,20 @@ Startup flow:
   4. Serve the auto-generated OpenAPI docs at /docs (Swagger UI).
 """
 
-from fastapi import FastAPI
+import logging
+import time
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import absoltec, tec, plots, stations, cb, propagation
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("tec-stat")
 
 app = FastAPI(
     title=settings.api_title,
@@ -45,6 +54,26 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Request logging — one line per handled request (health probes excluded)
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    started = time.monotonic()
+    response = await call_next(request)
+    if request.url.path not in {"/health", "/"}:
+        query = f"?{request.url.query}" if request.url.query else ""
+        logger.info(
+            "%s %s%s -> %d (%.2fs)",
+            request.method,
+            request.url.path,
+            query,
+            response.status_code,
+            time.monotonic() - started,
+        )
+    return response
+
 
 # ---------------------------------------------------------------------------
 # Routers

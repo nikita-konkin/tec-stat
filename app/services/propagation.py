@@ -37,6 +37,10 @@ from app.services.absoltec import get_raw_data as get_absoltec_raw_data
 from app.services.tec import get_tec_data
 from app.db.engine import get_connection
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 LIGHT_SPEED = 3.0 * (10 ** 8)
 TEC_TO_NT = 10.0 ** 16
 PROPAGATION_COEFF = 80.5
@@ -258,6 +262,10 @@ def compute_statistics_propagation_absoltec(
     files = absoltec_glob_files(root, year, doy_start, doy_end, station)
 
     if not files:
+        logger.warning(
+            "propagation stats: no AbsolTEC files for %s %d doy %d-%d under %s",
+            station, year, doy_start, doy_end, root,
+        )
         return PropagationStatisticsResponse(
             year=year,
             doy_start=doy_start,
@@ -270,6 +278,10 @@ def compute_statistics_propagation_absoltec(
             points=[],
         )
 
+    logger.info(
+        "propagation stats: %s %d doy %d-%d f=%.4g Hz — querying %d file(s)",
+        station, year, doy_start, doy_end, f_hz, len(files),
+    )
     file_list_sql = "[" + ", ".join(f"'{f}'" for f in files) + "]"
     conn = get_connection()
     df: pd.DataFrame = conn.execute(f"""

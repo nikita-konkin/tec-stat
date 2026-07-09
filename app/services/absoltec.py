@@ -16,6 +16,7 @@ We also aggregate mean SIP coordinates (G_lon, G_lat) alongside the TEC
 statistics so callers can draw spatial plots of where measurements were made.
 """
 
+import logging
 import math
 import os
 from typing import Optional
@@ -25,6 +26,8 @@ from scipy.stats import t as student_t
 
 from app.config import settings
 from app.db.columns import UT, I_V, G_LON, G_LAT, G_Q_LON, G_Q_LAT, G_T, G_Q_T
+
+logger = logging.getLogger(__name__)
 from app.db.engine import (
     get_connection,
     find_absoltec_file,
@@ -58,8 +61,10 @@ def get_raw_data(
     root = data_root or settings.data_root
     path = find_absoltec_file(root, year, doy, station)
     if path is None:
+        logger.warning("absoltec raw: no file for %s %d doy %d under %s", station, year, doy, root)
         return []
 
+    logger.info("absoltec raw: %s %d doy %d — reading %s", station, year, doy, os.path.basename(path))
     conn = get_connection()
     # Quoted column names are mandatory here: "I_v" ≠ "i_v" in DuckDB
     df: pd.DataFrame = conn.execute(f"""
@@ -155,11 +160,19 @@ def compute_statistics(
     files = absoltec_glob_files(root, year, doy_start, doy_end, station)
 
     if not files:
+        logger.warning(
+            "absoltec stats: no files for %s %d doy %d-%d under %s",
+            station, year, doy_start, doy_end, root,
+        )
         return StatisticsResponse(
             year=year, doy_start=doy_start, doy_end=doy_end,
             station=station, alpha=alpha, total_days=0, points=[],
         )
 
+    logger.info(
+        "absoltec stats: %s %d doy %d-%d — querying %d file(s)",
+        station, year, doy_start, doy_end, len(files),
+    )
     file_list_sql = "[" + ", ".join(f"'{f}'" for f in files) + "]"
     conn = get_connection()
     df: pd.DataFrame = conn.execute(f"""

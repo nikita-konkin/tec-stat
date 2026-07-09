@@ -19,6 +19,7 @@ If neither source is present, the service still works — coordinate fields
 will be None and the world-map feature will skip that station.
 """
 
+import logging
 import math
 import os
 import re
@@ -27,6 +28,8 @@ from typing import Optional
 
 import pandas as pd
 import pyarrow.parquet as pq
+
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.db.columns import (
@@ -73,10 +76,15 @@ def get_tec_data(
     path = find_tec_file(root, year, doy, station, satellite)
 
     if path is None:
+        logger.warning(
+            "tec raw: no file for %s/%s %d doy %d under %s",
+            station, satellite, year, doy, root,
+        )
         return TecDataResponse(
             year=year, doy=doy, station=station, satellite=satellite, points=[]
         )
 
+    logger.info("tec raw: %s/%s %d doy %d — reading %s", station, satellite, year, doy, os.path.basename(path))
     conn = get_connection()
     df: pd.DataFrame = conn.execute(
         f"SELECT {TEC_SELECT} FROM read_parquet('{path}') ORDER BY {HOUR}"

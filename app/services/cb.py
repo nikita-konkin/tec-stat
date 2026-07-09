@@ -14,12 +14,15 @@ We also aggregate mean SIP coordinates (G_lon, G_lat) alongside the CB
 statistics so callers can draw spatial plots of where measurements were made.
 """
 
+import logging
 import math
 import os
 from typing import Optional
 
 import pandas as pd
 from scipy.stats import t as student_t
+
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.db.columns import UT, I_V, G_LON, G_LAT, G_Q_LON, G_Q_LAT, G_T, G_Q_T
@@ -179,11 +182,19 @@ def compute_statistics_cb(
     files = absoltec_glob_files(root, year, doy_start, doy_end, station)
 
     if not files:
+        logger.warning(
+            "cb stats: no AbsolTEC files for %s %d doy %d-%d under %s",
+            station, year, doy_start, doy_end, root,
+        )
         return StatisticsResponseCB(
             year=year, doy_start=doy_start, doy_end=doy_end,
             station=station, alpha=alpha, total_days=0, points=[],
         )
 
+    logger.info(
+        "cb stats: %s %d doy %d-%d — querying %d file(s)",
+        station, year, doy_start, doy_end, len(files),
+    )
     file_list_sql = "[" + ", ".join(f"'{f}'" for f in files) + "]"
     conn = get_connection()
     df: pd.DataFrame = conn.execute(f"""
