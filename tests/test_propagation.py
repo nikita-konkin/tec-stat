@@ -37,6 +37,21 @@ def test_resolve_frequency_prefers_explicit_frequency():
     assert signal_band is None
 
 
+def test_resolve_frequency_glonass_bands():
+    f_hz, signal_band = propagation_service.resolve_frequency(None, "GLO_L1")
+    assert signal_band == "GLO_L1"
+    assert f_hz == pytest.approx(1.602e9)
+
+    # The full-name alias normalizes to the canonical GLO_* preset.
+    f_hz, signal_band = propagation_service.resolve_frequency(None, "glonass_l2")
+    assert signal_band == "GLO_L2"
+    assert f_hz == pytest.approx(1.246e9)
+
+    f_hz, signal_band = propagation_service.resolve_frequency(None, "glo_l3")
+    assert signal_band == "GLO_L3"
+    assert f_hz == pytest.approx(1.202025e9)
+
+
 def test_calculate_b_k_none_for_non_positive_nt():
     assert propagation_service.calculate_b_k(0.0, 1.0) is None
     assert propagation_service.calculate_b_k(None, 1.0) is None

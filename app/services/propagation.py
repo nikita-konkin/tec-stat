@@ -50,6 +50,9 @@ SignalBandName = Literal[
     "GPS_L1",
     "GPS_L2",
     "GPS_L5",
+    "GLO_L1",
+    "GLO_L2",
+    "GLO_L3",
     "GAL_E1",
     "GAL_E5A",
     "GAL_E5B",
@@ -60,10 +63,15 @@ SignalBandName = Literal[
     "BDS_B2I",
 ]
 
+# GLONASS L1/L2 are FDMA (f = f0 + k·Δf, k = −7…+6); the table uses the k=0
+# centre frequencies (1602.0 / 1246.0 MHz). L3 is CDMA with a fixed carrier.
 SIGNAL_BAND_FREQUENCIES_HZ: dict[SignalBandName, float] = {
     "GPS_L1": 1575.42e6,
     "GPS_L2": 1227.60e6,
     "GPS_L5": 1176.45e6,
+    "GLO_L1": 1602.0e6,
+    "GLO_L2": 1246.0e6,
+    "GLO_L3": 1202.025e6,
     "GAL_E1": 1575.42e6,
     "GAL_E5A": 1176.45e6,
     "GAL_E5B": 1207.14e6,
@@ -81,6 +89,8 @@ def normalize_signal_band(signal_band: Optional[str]) -> Optional[SignalBandName
     if not signal_band:
         return None
     normalized = signal_band.strip().upper().replace("-", "_").replace(" ", "_")
+    if normalized.startswith("GLONASS_"):
+        normalized = "GLO_" + normalized[len("GLONASS_"):]
     if normalized in SIGNAL_BAND_FREQUENCIES_HZ:
         return normalized  # type: ignore[return-value]
     return None
