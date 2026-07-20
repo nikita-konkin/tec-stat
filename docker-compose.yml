@@ -9,6 +9,9 @@ services:
     image: nikitaikonkin/tec-backend:${IMAGE_TAG:-latest}
     container_name: tec-backend
 
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
     ports:
       - "8000:8000"
 
