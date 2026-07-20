@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    image: tec-backend:latest
+    image: nikitaikonkin/tec-backend:${IMAGE_TAG:-latest}
     container_name: tec-backend
 
     ports:
