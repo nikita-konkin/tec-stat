@@ -27,13 +27,17 @@ class TestCalculateCB:
 
         assert _calculate_cb(tec) == pytest.approx(expected_cb)
 
-    def test_cb_zero_for_zero_tec(self):
-        """CB should be 0 when TEC is 0."""
-        assert _calculate_cb(0) == 0.0
+    def test_cb_none_for_zero_tec(self):
+        """TEC 0 is TayAbsTEC's missing-sample placeholder, so CB is undefined."""
+        assert _calculate_cb(0) is None
 
-    def test_cb_zero_for_negative_tec(self):
-        """CB should be 0 when TEC is negative."""
-        assert _calculate_cb(-1.0) == 0.0
+    def test_cb_none_for_negative_tec(self):
+        """CB is undefined when TEC is negative."""
+        assert _calculate_cb(-1.0) is None
+
+    def test_cb_none_for_missing_tec(self):
+        """A missing AbsolTEC sample (tec=None) has no CB."""
+        assert _calculate_cb(None) is None
 
     def test_cb_positive_for_positive_tec(self):
         """CB should be positive for positive TEC."""
@@ -113,11 +117,14 @@ class TestBuildStatsPointsCB:
         pts = _build_stats_points_cb(df, alpha=alpha)
         assert pts[0].student_ci == pytest.approx(expected_ci, rel=1e-4)
 
-    def test_no_ci_when_n_less_than_2(self):
-        """Student CI should be 0 when n < 2."""
-        df = _make_agg_df_cb([5.0], [1.0], [1.0], [1])
+    def test_no_spread_when_n_less_than_2(self):
+        """Variance, std_dev and Student CI are undefined (None) when n < 2."""
+        df = _make_agg_df_cb([5.0], [None], [None], [1])
         pts = _build_stats_points_cb(df, alpha=0.05)
-        assert pts[0].student_ci == 0.0
+        assert pts[0].mean_cb == pytest.approx(5.0)
+        assert pts[0].variance is None
+        assert pts[0].std_dev is None
+        assert pts[0].student_ci is None
 
 
 # ── Integration tests ────────────────────────────────────────────────────────

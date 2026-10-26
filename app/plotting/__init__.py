@@ -20,3 +20,13 @@ class PlotResult(NamedTuple):
     """
     png:  bytes
     data: dict
+
+
+def nan_for_none(values: list) -> list:
+    """
+    Map None to NaN for matplotlib calls that reject None (errorbar's yerr).
+
+    Series keep None so the JSON payload stays valid; this is only for drawing,
+    where NaN means "no bar here" (e.g. the CI of a single-sample slot).
+    """
+    return [float("nan") if v is None else v for v in values]

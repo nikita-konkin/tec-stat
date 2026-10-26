@@ -26,7 +26,7 @@ from scipy.signal import savgol_filter
 
 from app.config import settings
 from app.models.schemas import StatisticsPoint, TimeSeriesPoint
-from app.plotting import PlotResult
+from app.plotting import PlotResult, nan_for_none
 
 
 plt.rcParams.update(
@@ -101,6 +101,25 @@ def _doy_to_date(year: int, doy: int) -> str:
     return datetime.datetime.strptime(f"{doy}.{year}", "%j.%Y").strftime("%d.%m.%Y")
 
 
+def _smooth_valid(tec: list, polynomial_order: int) -> Optional[list]:
+    """
+    Savitzky-Golay smoothing over the valid samples only.
+
+    Missing samples (None) stay None in the result instead of turning the
+    filter window into NaN. The window is floor(N/2)+1 over the N valid
+    samples, matching the original GUI's approach. Returns None when there are
+    too few samples to fit the polynomial.
+    """
+    valid = [v for v in tec if v is not None]
+    if len(valid) <= polynomial_order:
+        return None
+    window = max(polynomial_order + 2, len(valid) // 2 + 1)
+    if window % 2 == 0:
+        window += 1
+    smoothed = iter(savgol_filter(np.array(valid), window, polynomial_order).tolist())
+    return [next(smoothed) if v is not None else None for v in tec]
+
+
 # ── Plot 1: Average over a day range (single station) ────────────────────────
 
 def plot_average(
@@ -141,10 +160,10 @@ def plot_average(
     ax.plot(ut, mean, "--", label="average TEC")
 
     if show_student_ci:
-        ax.errorbar(ut, mean, yerr=ci, fmt=".k", capsize=8,
+        ax.errorbar(ut, mean, yerr=nan_for_none(ci), fmt=".k", capsize=8,
                     label=f"Student CI (α={settings.default_alpha})", zorder=3)
     if show_variance:
-        ax.errorbar(ut, mean, yerr=var, fmt="o", capsize=4,
+        ax.errorbar(ut, mean, yerr=nan_for_none(var), fmt="o", capsize=4,
                     label="variance", alpha=0.6, zorder=2)
 
     ax.set_title(title, fontsize=_TITLE_FS)
@@ -206,11 +225,9 @@ def plot_single_day(
     tec_smooth = None
 
     fig, ax = _new_fig(width_px, height_px, dpi)
-    if smooth and len(tec) > polynomial_order:
-        window = max(polynomial_order + 2, len(tec) // 2 + 1)
-        if window % 2 == 0:
-            window += 1
-        tec_smooth = savgol_filter(np.array(tec), window, polynomial_order).tolist()
+    if smooth:
+        tec_smooth = _smooth_valid(tec, polynomial_order)
+    if tec_smooth is not None:
         ax.plot(ut, tec, alpha=0.35, color="steelblue", label="raw TEC")
         ax.plot(ut, tec_smooth, linewidth=2, color="steelblue", label="smoothed TEC")
     else:
@@ -267,11 +284,8 @@ def plot_multi_station(
         ut  = [p.ut  for p in points]
         tec = [p.tec for p in points]
 
-        if smooth and len(tec) > polynomial_order:
-            window = max(polynomial_order + 2, len(tec) // 2 + 1)
-            if window % 2 == 0:
-                window += 1
-            tec = savgol_filter(np.array(tec), window, polynomial_order).tolist()
+        if smooth:
+            tec = _smooth_valid(tec, polynomial_order) or tec
 
         ax.plot(ut, tec, label=station)
         series_data[station] = {"ut": ut, "tec": tec}
@@ -331,10 +345,10 @@ def plot_per_station_averages(
         fig, ax = _new_fig(width_px, height_px, dpi)
         ax.plot(ut, mean, "--", label="average TEC")
         if show_student_ci:
-            ax.errorbar(ut, mean, yerr=ci, fmt=".k", capsize=8,
+            ax.errorbar(ut, mean, yerr=nan_for_none(ci), fmt=".k", capsize=8,
                         label="Student CI", zorder=3)
         if show_variance:
-            ax.errorbar(ut, mean, yerr=var, fmt="o", capsize=4,
+            ax.errorbar(ut, mean, yerr=nan_for_none(var), fmt="o", capsize=4,
                         label="variance", alpha=0.6)
         ax.set_title(title, fontsize=11)
         _style_ax(ax)

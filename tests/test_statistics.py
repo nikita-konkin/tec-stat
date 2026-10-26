@@ -88,7 +88,7 @@ class TestBuildStatsPoints:
         """
         CI = t_ppf(1 - alpha/2, df=N-1) * std_dev / sqrt(N)
 
-        This is the exact formula from the original Count_statistics().
+        std_dev is the sample standard deviation the SQL aggregate supplies.
         Verify against scipy.stats.t directly.
         """
         n, std_dev, alpha = 15, 2.5, 0.05
@@ -99,11 +99,21 @@ class TestBuildStatsPoints:
         pts = _build_stats_points(df, alpha=alpha)
         assert pts[0].student_ci == pytest.approx(expected_ci, rel=1e-4)
 
-    def test_single_day_ci_is_zero(self):
-        """With N=1 the t-distribution is undefined — service returns 0.0."""
+    def test_single_day_spread_is_none(self):
+        """With N=1 the spread and the t-distribution are undefined — service returns None."""
+        df = _make_agg_df([5.0], [None], [None], [1])
+        pts = _build_stats_points(df, alpha=0.05)
+        assert pts[0].mean_tec == pytest.approx(5.0)
+        assert pts[0].variance is None
+        assert pts[0].std_dev is None
+        assert pts[0].student_ci is None
+
+    def test_single_day_spread_is_none_even_if_aggregate_reports_zero(self):
+        """A population-style 0.0 for N=1 must not leak out as a zero-width CI."""
         df = _make_agg_df([5.0], [0.0], [0.0], [1])
         pts = _build_stats_points(df, alpha=0.05)
-        assert pts[0].student_ci == 0.0
+        assert pts[0].variance is None
+        assert pts[0].student_ci is None
 
     def test_ci_is_positive(self):
         df = _make_agg_df([5.0], [1.0], [1.0], [20])
@@ -169,7 +179,7 @@ class TestNullHandling:
         })
         pts = _build_stats_points(df, alpha=0.05)
         assert pts[0].mean_tec == 0.0
-        assert pts[0].student_ci == 0.0
+        assert pts[0].student_ci is None
 
     def test_nan_mean_defaults_to_zero(self):
 
@@ -216,12 +226,15 @@ class TestFloatHelpers:
         assert _opt_float(0.0) == 0.0
 
 
-# ── Regression: original Count_statistics() exact reproduction ────────────────
+# ── Regression: sample-variance statistics ────────────────────────────────────
 
-class TestOriginalAlgorithmRegression:
+class TestSampleStatisticsRegression:
     """
-    Regression tests that pin the statistics to values computed manually
-    from the original Count_statistics() formula.
+    Regression tests that pin the statistics to values computed manually.
+
+    The original Count_statistics() used the population variance (denominator
+    N) inside a Student-t CI, which understates the CI by √((N-1)/N). The
+    service now uses the sample variance (denominator N-1).
 
     Scenario: 3 days, 1 time slot (ut=0.0), TEC values [10.0, 12.0, 11.0]
     """
@@ -235,25 +248,25 @@ class TestOriginalAlgorithmRegression:
         return sum(self.TEC) / self.N   # 11.0
 
     @property
-    def _var_pop(self):
-        # population variance (denominator = N, not N-1)
-        return sum((t - self._mean) ** 2 for t in self.TEC) / self.N  # 2/3
+    def _var_samp(self):
+        # sample variance (denominator = N-1)
+        return sum((t - self._mean) ** 2 for t in self.TEC) / (self.N - 1)  # 1.0
 
     @property
-    def _std_pop(self):
-        return self._var_pop ** 0.5
+    def _std_samp(self):
+        return self._var_samp ** 0.5
 
     @property
     def _student_ci(self):
         t_crit = student_t.ppf(1.0 - self.ALPHA / 2.0, df=self.N - 1)
-        return t_crit * self._std_pop / math.sqrt(self.N)
+        return t_crit * self._std_samp / math.sqrt(self.N)
 
     def _make_df(self) -> pd.DataFrame:
         return pd.DataFrame({
             UT:           [0.0],
             "mean_tec":   [self._mean],
-            "variance":   [self._var_pop],
-            "std_dev":    [self._std_pop],
+            "variance":   [self._var_samp],
+            "std_dev":    [self._std_samp],
             "n":          [self.N],
             "mean_g_lon": [None],
             "mean_g_lat": [None],
@@ -265,11 +278,11 @@ class TestOriginalAlgorithmRegression:
 
     def test_variance_correct(self):
         pts = _build_stats_points(self._make_df(), alpha=self.ALPHA)
-        assert pts[0].variance == pytest.approx(self._var_pop, rel=1e-4)
+        assert pts[0].variance == pytest.approx(self._var_samp, rel=1e-4)
 
     def test_std_dev_correct(self):
         pts = _build_stats_points(self._make_df(), alpha=self.ALPHA)
-        assert pts[0].std_dev == pytest.approx(self._std_pop, rel=1e-4)
+        assert pts[0].std_dev == pytest.approx(self._std_samp, rel=1e-4)
 
     def test_student_ci_correct(self):
         pts = _build_stats_points(self._make_df(), alpha=self.ALPHA)

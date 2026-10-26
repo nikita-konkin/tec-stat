@@ -7,7 +7,7 @@ def test_get_raw_data_range_cb_derives_from_absoltec_and_adds_cb(monkeypatch):
     def fake_abs_range(**_kwargs):
         return [
             {"station": "b", "concat_ut": 2.0, "tec": 10.0},
-            {"station": "a", "concat_ut": 1.0, "tec": 0.0},
+            {"station": "a", "concat_ut": 1.0, "tec": None},  # missing AbsolTEC sample
         ]
 
     monkeypatch.setattr(cb_service, "get_absoltec_raw_data_range", fake_abs_range)
@@ -21,7 +21,7 @@ def test_get_raw_data_range_cb_derives_from_absoltec_and_adds_cb(monkeypatch):
     )
 
     assert [r["station"] for r in rows] == ["a", "b"]  # sorted by (station, concat_ut)
-    assert "cb" in rows[0] and rows[0]["cb"] == 0.0
+    assert "cb" in rows[0] and rows[0]["cb"] is None
     assert "cb" in rows[1] and rows[1]["cb"] > 0.0
 
 
@@ -29,7 +29,7 @@ def test_get_raw_data_cb_derives_from_absoltec_raw(monkeypatch):
     def fake_abs_raw(*_args, **_kwargs):
         return [
             SimpleNamespace(ut=0.0, tec=10.0, g_lon=1.0, g_lat=2.0),
-            SimpleNamespace(ut=0.5, tec=0.0, g_lon=None, g_lat=None),
+            SimpleNamespace(ut=0.5, tec=None, g_lon=None, g_lat=None),  # missing sample
         ]
 
     monkeypatch.setattr(cb_service, "get_absoltec_raw_data", fake_abs_raw)
@@ -40,6 +40,6 @@ def test_get_raw_data_cb_derives_from_absoltec_raw(monkeypatch):
     assert points[0].tec == 10.0
     assert points[0].cb > 0.0
     assert points[0].g_lon == 1.0
-    assert points[1].tec == 0.0
-    assert points[1].cb == 0.0
+    assert points[1].tec is None
+    assert points[1].cb is None
 

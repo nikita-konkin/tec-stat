@@ -25,7 +25,9 @@ class TimeSeriesPoint(BaseModel):
     building spatial maps later.
     """
     ut:     float = Field(...,  description="Universal time in decimal hours [0, 23.5]")
-    tec:    float = Field(...,  description="Absolute vertical TEC, TECU (column I_v)")
+    tec:    Optional[float] = Field(
+        ..., description="Absolute vertical TEC, TECU (column I_v); None when TayAbsTEC left the slot unsolved (I_v <= 0)"
+    )
     g_lon:  Optional[float] = Field(None, description="SIP geographic longitude (°)")
     g_lat:  Optional[float] = Field(None, description="SIP geographic latitude (°)")
     g_q_lon: Optional[float] = Field(None, description="Quality flag for G_lon")
@@ -43,13 +45,13 @@ class StatisticsPoint(BaseModel):
     with the mean SIP coordinates so clients can draw spatial plots.
     """
     ut:          float = Field(..., description="Universal time in decimal hours")
-    mean_tec:    float = Field(..., description="Mean TEC across N days (TECU)")
-    variance:    float = Field(..., description="Population variance σ² (TECU²)")
-    std_dev:     float = Field(..., description="Standard deviation σ (TECU)")
-    student_ci:  float = Field(
-        ..., description="Half-width of Student-t CI at the configured alpha. Plot as mean ± student_ci."
+    mean_tec:    float = Field(..., description="Mean TEC across N valid samples (TECU)")
+    variance:    Optional[float] = Field(..., description="Sample variance s² (TECU², denominator N-1); None when N < 2")
+    std_dev:     Optional[float] = Field(..., description="Sample standard deviation s (TECU); None when N < 2")
+    student_ci:  Optional[float] = Field(
+        ..., description="Half-width of Student-t CI at the configured alpha; None when N < 2. Plot as mean ± student_ci."
     )
-    n:           int   = Field(..., description="Number of days in this slot's average")
+    n:           int   = Field(..., description="Number of valid samples (I_v > 0) in this slot's average")
     mean_g_lon:  Optional[float] = Field(None, description="Mean SIP longitude across N days")
     mean_g_lat:  Optional[float] = Field(None, description="Mean SIP latitude across N days")
 
@@ -92,8 +94,8 @@ class TimeSeriesPointCB(BaseModel):
     CB is calculated as: sqrt(4*3*10^8 * 1^3 * 10^27) / sqrt(80.5 * π * abs_tec * 10^16)
     """
     ut:     float = Field(...,  description="Universal time in decimal hours [0, 23.5]")
-    tec:    float = Field(...,  description="Absolute vertical TEC, TECU")
-    cb:     float = Field(...,  description="Coherence Band value")
+    tec:    Optional[float] = Field(..., description="Absolute vertical TEC, TECU; None for a missing sample (I_v <= 0)")
+    cb:     Optional[float] = Field(..., description="Coherence Band value; None when tec is None")
     g_lon:  Optional[float] = Field(None, description="SIP geographic longitude (°)")
     g_lat:  Optional[float] = Field(None, description="SIP geographic latitude (°)")
     g_q_lon: Optional[float] = Field(None, description="Quality flag for G_lon")
@@ -107,13 +109,13 @@ class StatisticsPointCB(BaseModel):
     Aggregated statistics for CB values in one 30-minute time slot across N days.
     """
     ut:          float = Field(..., description="Universal time in decimal hours")
-    mean_cb:     float = Field(..., description="Mean CB across N days")
-    variance:    float = Field(..., description="Population variance σ²")
-    std_dev:     float = Field(..., description="Standard deviation σ")
-    student_ci:  float = Field(
-        ..., description="Half-width of Student-t CI at the configured alpha. Plot as mean ± student_ci."
+    mean_cb:     float = Field(..., description="Mean CB across N valid samples")
+    variance:    Optional[float] = Field(..., description="Sample variance s² (denominator N-1); None when N < 2")
+    std_dev:     Optional[float] = Field(..., description="Sample standard deviation s; None when N < 2")
+    student_ci:  Optional[float] = Field(
+        ..., description="Half-width of Student-t CI at the configured alpha; None when N < 2. Plot as mean ± student_ci."
     )
-    n:           int   = Field(..., description="Number of days in this slot's average")
+    n:           int   = Field(..., description="Number of valid samples (I_v > 0) in this slot's average")
     mean_g_lon:  Optional[float] = Field(None, description="Mean SIP longitude across N days")
     mean_g_lat:  Optional[float] = Field(None, description="Mean SIP latitude across N days")
 
@@ -160,7 +162,7 @@ class PropagationDirectResponse(BaseModel):
 class PropagationPointAbsoltec(BaseModel):
     """One AbsolTEC sample with derived propagation parameters."""
     ut:     float = Field(..., description="Universal time in decimal hours [0, 23.5]")
-    tec:    float = Field(..., description="Absolute vertical TEC, TECU (column I_v)")
+    tec:    Optional[float] = Field(..., description="Absolute vertical TEC, TECU (column I_v); None for a missing sample (I_v <= 0)")
     nt:     Optional[float] = Field(None, description="Absolute total electron content N_t in electrons/m^2")
     f_hz:   float = Field(..., description="Working frequency in Hz")
     signal_band: Optional[str] = Field(None, description="Resolved signal-band preset used for frequency lookup")
@@ -180,13 +182,13 @@ class PropagationStatisticsPoint(BaseModel):
     mean_tec:       float = Field(..., description="Mean TEC across valid samples (TECU)")
     mean_nt:        float = Field(..., description="Mean absolute total electron content N_t")
     mean_b_k:       float = Field(..., description="Mean coherence bandwidth B_k")
-    variance_b_k:   float = Field(..., description="Population variance of B_k")
-    std_dev_b_k:    float = Field(..., description="Population standard deviation of B_k")
-    student_ci_b_k: float = Field(..., description="Half-width of Student-t CI for B_k")
+    variance_b_k:   Optional[float] = Field(..., description="Sample variance of B_k (denominator N-1); None when N < 2")
+    std_dev_b_k:    Optional[float] = Field(..., description="Sample standard deviation of B_k; None when N < 2")
+    student_ci_b_k: Optional[float] = Field(..., description="Half-width of Student-t CI for B_k; None when N < 2")
     mean_gdd:       float = Field(..., description="Mean group delay dispersion GDD")
-    variance_gdd:   float = Field(..., description="Population variance of GDD")
-    std_dev_gdd:    float = Field(..., description="Population standard deviation of GDD")
-    student_ci_gdd: float = Field(..., description="Half-width of Student-t CI for GDD")
+    variance_gdd:   Optional[float] = Field(..., description="Sample variance of GDD (denominator N-1); None when N < 2")
+    std_dev_gdd:    Optional[float] = Field(..., description="Sample standard deviation of GDD; None when N < 2")
+    student_ci_gdd: Optional[float] = Field(..., description="Half-width of Student-t CI for GDD; None when N < 2")
     n:              int   = Field(..., description="Number of valid samples in this slot's average")
     mean_g_lon:     Optional[float] = Field(None, description="Mean SIP longitude across valid samples")
     mean_g_lat:     Optional[float] = Field(None, description="Mean SIP latitude across valid samples")

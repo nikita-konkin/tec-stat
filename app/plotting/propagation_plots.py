@@ -22,7 +22,7 @@ from app.models.schemas import (
     PropagationStatisticsPoint,
     PropagationTecPoint,
 )
-from app.plotting import PlotResult
+from app.plotting import PlotResult, nan_for_none
 
 
 plt.rcParams.update(
@@ -166,7 +166,7 @@ def plot_average(
         ax.errorbar(
             ut,
             mean,
-            yerr=student_ci,
+            yerr=nan_for_none(student_ci),
             fmt=".k",
             capsize=8,
             label="Student CI",
@@ -176,7 +176,7 @@ def plot_average(
         ax.errorbar(
             ut,
             mean,
-            yerr=variance,
+            yerr=nan_for_none(variance),
             fmt="o",
             capsize=4,
             label="variance",

@@ -145,15 +145,16 @@ def _code_absoltec_average(series: dict, options: dict) -> str:
     if show_ci:
         lines += [
             "",
-            "# Student-t confidence interval (half-width stored in student_ci)",
-            "ci = series['student_ci']",
+            "# Student-t confidence interval (half-width stored in student_ci;",
+            "# None for single-sample slots, drawn as NaN = no bar)",
+            "ci = [np.nan if v is None else v for v in series['student_ci']]",
             "ax.errorbar(ut, mean, yerr=ci, fmt='.k', capsize=8,",
             "            label='Student CI', zorder=3)",
         ]
     if show_var:
         lines += [
             "",
-            "var = series['variance']",
+            "var = [np.nan if v is None else v for v in series['variance']]",
             "ax.errorbar(ut, mean, yerr=var, fmt='o', capsize=4,",
             "            label='variance', alpha=0.6, zorder=2)",
         ]
@@ -172,9 +173,13 @@ def _code_single_day(series: dict, options: dict) -> str:
         lines += [
             "from scipy.signal import savgol_filter",
             f"poly   = {poly}",
-            "window = max(poly + 2, len(tec) // 2 + 1)",
+            "# Missing samples are None; smooth the valid ones only.",
+            "valid  = [i for i, v in enumerate(tec) if v is not None]",
+            "window = max(poly + 2, len(valid) // 2 + 1)",
             "if window % 2 == 0: window += 1",
-            "tec_s  = savgol_filter(tec, window, poly)",
+            "tec_s  = [None] * len(tec)",
+            "for i, v in zip(valid, savgol_filter([tec[i] for i in valid], window, poly)):",
+            "    tec_s[i] = v",
             "",
             "ax.plot(ut, tec, alpha=0.35, color='steelblue', label='raw TEC')",
             "ax.plot(ut, tec_s, linewidth=2, color='steelblue', label='smoothed TEC')",
@@ -220,14 +225,14 @@ def _code_propagation_average(series: dict, options: dict) -> str:
     if show_ci:
         lines += [
             "",
-            f"ci = series['{ci_key}']",
+            f"ci = [np.nan if v is None else v for v in series['{ci_key}']]",
             "ax.errorbar(ut, mean, yerr=ci, fmt='.k', capsize=8,",
             "            label='Student CI', zorder=3)",
         ]
     if show_var:
         lines += [
             "",
-            f"variance = series['{variance_key}']",
+            f"variance = [np.nan if v is None else v for v in series['{variance_key}']]",
             "ax.errorbar(ut, mean, yerr=variance, fmt='o', capsize=4,",
             "            label='variance', alpha=0.6, zorder=2)",
         ]

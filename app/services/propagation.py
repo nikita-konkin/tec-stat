@@ -10,10 +10,13 @@ frequency using:
 
 `f` is expected in Hz. TEC inputs are expected in TECU.
 
-For raw dataset endpoints, non-positive TEC values are preserved in the source
-field but treated as invalid for derived propagation parameters, so `b_k` and
-`gdd` are returned as None. For statistics, only strictly positive TEC samples
-participate in the aggregate.
+For raw dataset endpoints, non-positive TEC values are treated as invalid for
+derived propagation parameters, so `b_k` and `gdd` are returned as None.
+TEC-suite values are preserved in the source field; AbsolTEC ones arrive as
+tec=None already, because I_v <= 0 marks a missing sample there (see
+app.services.absoltec). For statistics, only strictly positive TEC samples
+participate in the aggregate, and variances are sample variances
+(denominator N-1), None together with the CI when N < 2.
 """
 
 import math
@@ -33,6 +36,7 @@ from app.models.schemas import (
     PropagationTecPoint,
     PropagationTecResponse,
 )
+from app.services.absoltec import VALID_TEC_SQL, files_with_valid_tec
 from app.services.absoltec import get_raw_data as get_absoltec_raw_data
 from app.services.tec import get_tec_data
 from app.db.engine import get_connection
@@ -123,9 +127,9 @@ def resolve_frequency(
     return float(SIGNAL_BAND_FREQUENCIES_HZ[normalized_band]), normalized_band
 
 
-def tec_to_nt(tec: float) -> Optional[float]:
+def tec_to_nt(tec: Optional[float]) -> Optional[float]:
     """Convert TECU to absolute total electron content N_t."""
-    if tec < 0:
+    if tec is None or tec < 0:
         return None
     return tec * TEC_TO_NT
 
@@ -183,11 +187,11 @@ def get_raw_data_propagation_absoltec(
 
     points: list[PropagationPointAbsoltec] = []
     for p in abs_points:
-        nt = tec_to_nt(float(p.tec))
+        nt = tec_to_nt(p.tec)
         points.append(
             PropagationPointAbsoltec(
                 ut=float(p.ut),
-                tec=float(p.tec),
+                tec=p.tec,
                 nt=_opt_float(nt),
                 f_hz=float(f_hz),
                 signal_band=signal_band,
@@ -293,36 +297,26 @@ def compute_statistics_propagation_absoltec(
         station, year, doy_start, doy_end, f_hz, len(files),
     )
     file_list_sql = "[" + ", ".join(f"'{f}'" for f in files) + "]"
+    b_k_sql = f'SQRT(({LIGHT_SPEED} * POWER({f_hz}, 3)) / ({PROPAGATION_COEFF} * PI() * ("{I_V}" * POWER(10, 16))))'
+    gdd_sql = f'(-3 * {PROPAGATION_COEFF} * ("{I_V}" * POWER(10, 16))) / (2 * {LIGHT_SPEED} * PI() * POWER({f_hz}, 3))'
     conn = get_connection()
     df: pd.DataFrame = conn.execute(f"""
         SELECT
             "{UT}",
-            AVG(CASE WHEN "{I_V}" > 0 THEN "{I_V}" END) AS mean_tec,
-            AVG(CASE WHEN "{I_V}" > 0 THEN "{I_V}" * POWER(10, 16) END) AS mean_nt,
-            AVG(CASE WHEN "{I_V}" > 0 THEN
-                SQRT(({LIGHT_SPEED} * POWER({f_hz}, 3)) / ({PROPAGATION_COEFF} * PI() * ("{I_V}" * POWER(10, 16))))
-            END) AS mean_b_k,
-            VAR_POP(CASE WHEN "{I_V}" > 0 THEN
-                SQRT(({LIGHT_SPEED} * POWER({f_hz}, 3)) / ({PROPAGATION_COEFF} * PI() * ("{I_V}" * POWER(10, 16))))
-            END) AS variance_b_k,
-            STDDEV_POP(CASE WHEN "{I_V}" > 0 THEN
-                SQRT(({LIGHT_SPEED} * POWER({f_hz}, 3)) / ({PROPAGATION_COEFF} * PI() * ("{I_V}" * POWER(10, 16))))
-            END) AS std_dev_b_k,
-            AVG(CASE WHEN "{I_V}" > 0 THEN
-                (-3 * {PROPAGATION_COEFF} * ("{I_V}" * POWER(10, 16))) / (2 * {LIGHT_SPEED} * PI() * POWER({f_hz}, 3))
-            END) AS mean_gdd,
-            VAR_POP(CASE WHEN "{I_V}" > 0 THEN
-                (-3 * {PROPAGATION_COEFF} * ("{I_V}" * POWER(10, 16))) / (2 * {LIGHT_SPEED} * PI() * POWER({f_hz}, 3))
-            END) AS variance_gdd,
-            STDDEV_POP(CASE WHEN "{I_V}" > 0 THEN
-                (-3 * {PROPAGATION_COEFF} * ("{I_V}" * POWER(10, 16))) / (2 * {LIGHT_SPEED} * PI() * POWER({f_hz}, 3))
-            END) AS std_dev_gdd,
-            SUM(CASE WHEN "{I_V}" > 0 THEN 1 ELSE 0 END) AS n,
-            AVG(CASE WHEN "{I_V}" > 0 THEN "{G_LON}" END) AS mean_g_lon,
-            AVG(CASE WHEN "{I_V}" > 0 THEN "{G_LAT}" END) AS mean_g_lat
+            AVG("{I_V}")                  AS mean_tec,
+            AVG("{I_V}" * POWER(10, 16))  AS mean_nt,
+            AVG({b_k_sql})                AS mean_b_k,
+            VAR_SAMP({b_k_sql})           AS variance_b_k,
+            STDDEV_SAMP({b_k_sql})        AS std_dev_b_k,
+            AVG({gdd_sql})                AS mean_gdd,
+            VAR_SAMP({gdd_sql})           AS variance_gdd,
+            STDDEV_SAMP({gdd_sql})        AS std_dev_gdd,
+            COUNT(*)                      AS n,
+            AVG("{G_LON}")                AS mean_g_lon,
+            AVG("{G_LAT}")                AS mean_g_lat
         FROM read_parquet({file_list_sql})
+        WHERE {VALID_TEC_SQL}
         GROUP BY "{UT}"
-        HAVING SUM(CASE WHEN "{I_V}" > 0 THEN 1 ELSE 0 END) > 0
         ORDER BY "{UT}"
     """).df()
 
@@ -334,7 +328,7 @@ def compute_statistics_propagation_absoltec(
         alpha=alpha,
         f_hz=float(f_hz),
         signal_band=signal_band,
-        total_days=len(files),
+        total_days=len(files_with_valid_tec(files)),
         points=_build_stats_points_propagation(df, alpha),
     )
 
@@ -343,20 +337,21 @@ def _build_stats_points_propagation(
     df: pd.DataFrame,
     alpha: float,
 ) -> list[PropagationStatisticsPoint]:
-    """Convert the aggregate DataFrame into API models."""
+    """Convert the aggregate DataFrame into API models; spread is None when n < 2."""
     points: list[PropagationStatisticsPoint] = []
     for _, row in df.iterrows():
         n = int(row["n"])
-        std_dev_b_k = _safe_float(row.get("std_dev_b_k"))
-        std_dev_gdd = _safe_float(row.get("std_dev_gdd"))
+        spread = n > 1
+        std_dev_b_k = _opt_float(row.get("std_dev_b_k")) if spread else None
+        std_dev_gdd = _opt_float(row.get("std_dev_gdd")) if spread else None
 
-        if n > 1:
+        ci_b_k = ci_gdd = None
+        if spread:
             t_critical = student_t.ppf(1.0 - alpha / 2.0, df=n - 1)
-            ci_b_k = t_critical * std_dev_b_k / math.sqrt(n)
-            ci_gdd = t_critical * std_dev_gdd / math.sqrt(n)
-        else:
-            ci_b_k = 0.0
-            ci_gdd = 0.0
+            if std_dev_b_k is not None:
+                ci_b_k = t_critical * std_dev_b_k / math.sqrt(n)
+            if std_dev_gdd is not None:
+                ci_gdd = t_critical * std_dev_gdd / math.sqrt(n)
 
         points.append(
             PropagationStatisticsPoint(
@@ -364,11 +359,11 @@ def _build_stats_points_propagation(
                 mean_tec=_safe_float(row.get("mean_tec")),
                 mean_nt=_safe_float(row.get("mean_nt")),
                 mean_b_k=_safe_float(row.get("mean_b_k")),
-                variance_b_k=_safe_float(row.get("variance_b_k")),
+                variance_b_k=_opt_float(row.get("variance_b_k")) if spread else None,
                 std_dev_b_k=std_dev_b_k,
                 student_ci_b_k=ci_b_k,
                 mean_gdd=_safe_float(row.get("mean_gdd")),
-                variance_gdd=_safe_float(row.get("variance_gdd")),
+                variance_gdd=_opt_float(row.get("variance_gdd")) if spread else None,
                 std_dev_gdd=std_dev_gdd,
                 student_ci_gdd=ci_gdd,
                 n=n,

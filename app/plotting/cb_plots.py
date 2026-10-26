@@ -26,7 +26,7 @@ from scipy.signal import savgol_filter
 
 from app.config import settings
 from app.models.schemas import StatisticsPointCB, TimeSeriesPointCB
-from app.plotting import PlotResult
+from app.plotting import PlotResult, nan_for_none
 
 
 plt.rcParams.update(
@@ -144,10 +144,10 @@ def plot_average_cb(
     ax.plot(ut, mean, "--", label="average CB")
 
     if show_student_ci:
-        ax.errorbar(ut, mean, yerr=ci, fmt=".k", capsize=8,
+        ax.errorbar(ut, mean, yerr=nan_for_none(ci), fmt=".k", capsize=8,
                     label=f"Student CI (α={settings.default_alpha})", zorder=3)
     if show_variance:
-        ax.errorbar(ut, mean, yerr=var, fmt="o", capsize=4,
+        ax.errorbar(ut, mean, yerr=nan_for_none(var), fmt="o", capsize=4,
                     label="variance", alpha=0.6, zorder=2)
 
     ax.set_title(title, fontsize=_TITLE_FS)
@@ -255,8 +255,10 @@ def plot_multi_station_cb(
             continue
         if station not in station_data:
             station_data[station] = {"x": [], "y": []}
+        cb = row.get("cb")
         station_data[station]["x"].append(float(row["concat_ut"]))
-        station_data[station]["y"].append(float(row["cb"]))
+        # Missing samples stay None: a gap in the line and null in the JSON.
+        station_data[station]["y"].append(float(cb) if cb is not None else None)
 
     d_start = _doy_to_date(year, doy_start)
     d_end   = _doy_to_date(year, doy_end)
@@ -552,7 +554,7 @@ def plot_per_station_averages_cb(
 
         date = _doy_to_date(response.year, response.doy)
         ax.plot(ut, mean_cb, "o-", markersize=3, label="average CB")
-        ax.errorbar(ut, mean_cb, yerr=ci, fmt=".k", capsize=4,
+        ax.errorbar(ut, mean_cb, yerr=nan_for_none(ci), fmt=".k", capsize=4,
                     label=f"CI α={response.alpha}", zorder=3)
 
         ax.set_title(f"{date}", fontsize=11)

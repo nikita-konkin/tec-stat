@@ -6,11 +6,18 @@ is case-sensitive for column names inside read_parquet(), so 'UT' and 'ut'
 are different columns. All column names come from app.db.columns to avoid
 typos and ensure a single source of truth.
 
-Statistics formulas (identical to the original Count_statistics()):
+Missing samples: TayAbsTEC writes I_v = 0.000 for half-hours it could not
+solve (the station fit failed), so a non-positive I_v is a placeholder, not a
+measurement. Raw reads return it as tec=None and every aggregate skips it.
+
+Statistics formulas, over valid samples only:
   mean     = AVG("I_v")
-  variance = VAR_POP("I_v")    — population variance, denominator N
-  std_dev  = STDDEV_POP("I_v")
-  student_ci = t_ppf(1-α/2, df=N-1) × σ / √N
+  variance = VAR_SAMP("I_v")    — sample variance, denominator N-1
+  std_dev  = STDDEV_SAMP("I_v")
+  student_ci = t_ppf(1-α/2, df=N-1) × s / √N
+variance, std_dev and student_ci are None when N < 2. This deliberately
+departs from the original Count_statistics(), which used the population
+variance and so understated the CI by a factor of √((N-1)/N).
 
 We also aggregate mean SIP coordinates (G_lon, G_lat) alongside the TEC
 statistics so callers can draw spatial plots of where measurements were made.
@@ -40,6 +47,28 @@ from app.models.schemas import (
     PerStationStatisticsResponse,
 )
 
+# SQL predicate selecting real measurements; see "Missing samples" above.
+VALID_TEC_SQL = f'"{I_V}" > 0'
+
+
+def valid_tec(value) -> Optional[float]:
+    """Return an I_v value as float, or None when it is a missing-sample placeholder."""
+    tec = _opt_float(value)
+    return tec if tec is not None and tec > 0 else None
+
+
+def files_with_valid_tec(files: list[str]) -> set[str]:
+    """Return the subset of AbsolTEC files holding at least one valid I_v sample."""
+    if not files:
+        return set()
+    conn = get_connection()
+    rows = conn.execute(f"""
+        SELECT DISTINCT filename
+        FROM read_parquet({_file_list_sql(files)}, filename = true)
+        WHERE {VALID_TEC_SQL}
+    """).fetchall()
+    return {row[0] for row in rows}
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Raw data access
@@ -56,6 +85,8 @@ def get_raw_data(
 
     All 8 columns are fetched. Optional fields (G_lon etc.) will be None
     if they contain NaN in the parquet — Pydantic handles this gracefully.
+    tec is None for missing samples (I_v <= 0); the row is kept so the
+    30-minute grid stays intact and plots show a gap.
     Returns an empty list when the file does not exist.
     """
     root = data_root or settings.data_root
@@ -85,7 +116,7 @@ def get_raw_data(
     for _, row in df.iterrows():
         points.append(TimeSeriesPoint(
             ut=float(row[UT]),
-            tec=float(row[I_V]),
+            tec=valid_tec(row[I_V]),
             g_lon=_opt_float(row.get(G_LON)),
             g_lat=_opt_float(row.get(G_LAT)),
             g_q_lon=_opt_float(row.get(G_Q_LON)),
@@ -173,25 +204,11 @@ def compute_statistics(
         "absoltec stats: %s %d doy %d-%d — querying %d file(s)",
         station, year, doy_start, doy_end, len(files),
     )
-    file_list_sql = "[" + ", ".join(f"'{f}'" for f in files) + "]"
-    conn = get_connection()
-    df: pd.DataFrame = conn.execute(f"""
-        SELECT
-            "{UT}",
-            AVG("{I_V}")         AS mean_tec,
-            VAR_POP("{I_V}")     AS variance,
-            STDDEV_POP("{I_V}")  AS std_dev,
-            COUNT(*)             AS n,
-            AVG("{G_LON}")       AS mean_g_lon,
-            AVG("{G_LAT}")       AS mean_g_lat
-        FROM read_parquet({file_list_sql})
-        GROUP BY "{UT}"
-        ORDER BY "{UT}"
-    """).df()
+    df = _aggregate_by_ut(files)
 
     return StatisticsResponse(
         year=year, doy_start=doy_start, doy_end=doy_end,
-        station=station, alpha=alpha, total_days=len(files),
+        station=station, alpha=alpha, total_days=len(files_with_valid_tec(files)),
         points=_build_stats_points(df, alpha),
     )
 
@@ -223,24 +240,14 @@ def compute_statistics_per_station_day(
                 day_files.append(p)
                 day_stations.append(station)
 
+        # A station whose file holds only placeholders has no data that day.
+        valid_files = files_with_valid_tec(day_files)
+        day_stations = [s for s, f in zip(day_stations, day_files) if f in valid_files]
+        day_files = [f for f in day_files if f in valid_files]
         if not day_files:
             continue
 
-        file_list_sql = "[" + ", ".join(f"'{f}'" for f in day_files) + "]"
-        conn = get_connection()
-        df: pd.DataFrame = conn.execute(f"""
-            SELECT
-                "{UT}",
-                AVG("{I_V}")         AS mean_tec,
-                VAR_POP("{I_V}")     AS variance,
-                STDDEV_POP("{I_V}")  AS std_dev,
-                COUNT(*)             AS n,
-                AVG("{G_LON}")       AS mean_g_lon,
-                AVG("{G_LAT}")       AS mean_g_lat
-            FROM read_parquet({file_list_sql})
-            GROUP BY "{UT}"
-            ORDER BY "{UT}"
-        """).df()
+        df = _aggregate_by_ut(day_files)
 
         results.append(PerStationStatisticsResponse(
             year=year, doy=doy, stations_found=day_stations, alpha=alpha,
@@ -254,6 +261,29 @@ def compute_statistics_per_station_day(
 # Internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _file_list_sql(files: list[str]) -> str:
+    return "[" + ", ".join(f"'{f}'" for f in files) + "]"
+
+
+def _aggregate_by_ut(files: list[str]) -> pd.DataFrame:
+    """Per-UT aggregate of valid I_v samples across files; slots without one are omitted."""
+    conn = get_connection()
+    return conn.execute(f"""
+        SELECT
+            "{UT}",
+            AVG("{I_V}")          AS mean_tec,
+            VAR_SAMP("{I_V}")     AS variance,
+            STDDEV_SAMP("{I_V}")  AS std_dev,
+            COUNT(*)              AS n,
+            AVG("{G_LON}")        AS mean_g_lon,
+            AVG("{G_LAT}")        AS mean_g_lat
+        FROM read_parquet({_file_list_sql(files)})
+        WHERE {VALID_TEC_SQL}
+        GROUP BY "{UT}"
+        ORDER BY "{UT}"
+    """).df()
+
+
 def _build_stats_points(df: pd.DataFrame, alpha: float) -> list[StatisticsPoint]:
     """
     Convert a DuckDB aggregate result into a list of StatisticsPoint objects,
@@ -261,26 +291,28 @@ def _build_stats_points(df: pd.DataFrame, alpha: float) -> list[StatisticsPoint]
 
     The DataFrame column for UT is named 'UT' (the actual parquet column name),
     while the aggregated columns have lowercase aliases assigned in the SQL.
+    Spread is undefined for a single sample, so variance, std_dev and
+    student_ci are None when n < 2.
     """
     points = []
     for _, row in df.iterrows():
         n = int(row["n"])
-        std_dev  = _safe_float(row, "std_dev")
         mean_tec = _safe_float(row, "mean_tec")
-        variance = _safe_float(row, "variance")
+        variance = _opt_float(row.get("variance")) if n > 1 else None
+        std_dev  = _opt_float(row.get("std_dev")) if n > 1 else None
 
-        if n > 1:
+        if std_dev is not None:
             t_critical = student_t.ppf(1.0 - alpha / 2.0, df=n - 1)
-            ci = t_critical * std_dev / math.sqrt(n)
+            ci = round(t_critical * std_dev / math.sqrt(n), 5)
         else:
-            ci = 0.0
+            ci = None
 
         points.append(StatisticsPoint(
             ut=float(row[UT]),
             mean_tec=round(mean_tec, 3),
-            variance=round(variance, 5),
-            std_dev=round(std_dev, 5),
-            student_ci=round(ci, 5),
+            variance=round(variance, 5) if variance is not None else None,
+            std_dev=round(std_dev, 5) if std_dev is not None else None,
+            student_ci=ci,
             n=n,
             mean_g_lon=_opt_float(row.get("mean_g_lon")),
             mean_g_lat=_opt_float(row.get("mean_g_lat")),
