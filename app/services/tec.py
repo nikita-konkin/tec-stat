@@ -42,6 +42,7 @@ from app.db.columns import (
 from app.db.engine import (
     get_connection,
     find_tec_file,
+    find_tec_files,
     tec_glob_satellites,
     tec_discover_stations,
 )
@@ -76,11 +77,14 @@ def get_tec_data(
       "tec.l1l2" → tec_l1l2
       "tec.c1p2" → tec_c1p2
     so the returned DataFrame has clean underscore-named columns.
+
+    The day's __dupN session shards are read with the base file, and rows
+    repeated across them are kept once.
     """
     root = data_root or settings.data_root
-    path = find_tec_file(root, year, doy, station, satellite)
+    paths = find_tec_files(root, year, doy, station, satellite)
 
-    if path is None:
+    if not paths:
         logger.warning(
             "tec raw: no file for %s/%s %d doy %d under %s",
             station, satellite, year, doy, root,
@@ -89,10 +93,14 @@ def get_tec_data(
             year=year, doy=doy, station=station, satellite=satellite, points=[]
         )
 
-    logger.info("tec raw: %s/%s %d doy %d — reading %s", station, satellite, year, doy, os.path.basename(path))
+    logger.info(
+        "tec raw: %s/%s %d doy %d — reading %s (+%d session shards)",
+        station, satellite, year, doy, os.path.basename(paths[0]), len(paths) - 1,
+    )
+    file_list = ", ".join("'" + path.replace("'", "''") + "'" for path in paths)
     conn = get_connection()
     df: pd.DataFrame = conn.execute(
-        f"SELECT {TEC_SELECT} FROM read_parquet('{path}') ORDER BY {HOUR}"
+        f"SELECT DISTINCT {TEC_SELECT} FROM read_parquet([{file_list}]) ORDER BY {HOUR}, {TSN}"
     ).df()
 
     points = [

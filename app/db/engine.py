@@ -15,12 +15,23 @@ The folder suffix is intentionally ignored in all path construction.
 
 import glob
 import os
+import re
 import threading
 from pathlib import Path
 
 import duckdb
 
 from app.config import settings
+
+# File stems, matched from the end: a station code may itself end in "_"
+# (ufa_ → ufa__001_2025), which splitting on "_" miscounts.
+_ABSOLTEC_STEM_RE = re.compile(r"^(?P<station>.+?)_(?P<doy>\d{3})_(?P<year>\d{4})$")
+_TEC_STEM_RE = re.compile(r"^(?P<station>.+?)_(?P<satellite>[^_]+)_(?P<doy>\d{3})_(?P<year2d>\d{2})$")
+
+# tec-suite writes each session (hourly or re-uploaded) archive of a station
+# into the same day folder; a file whose name is already taken becomes
+# {stem}__dup{N}.parquet, holding epochs the base file lacks.
+_TEC_SHARD_RE = re.compile(r"__dup(\d+)\.parquet$")
 
 # ── Per-thread DuckDB connection ──────────────────────────────────────────────
 _local = threading.local()
@@ -105,8 +116,8 @@ def absoltec_discover_stations(data_root: str, year: int, doy: int) -> list:
     """
     Scan the doy directory and return station codes that have AbsolTEC files.
 
-    AbsolTEC files have exactly 3 '_'-split stem segments (station_doy_year),
-    which distinguishes them from TEC-suite files (4 segments).
+    AbsolTEC stems are station_doy_year (4-digit year), which distinguishes
+    them from TEC-suite stems station_satellite_doy_year2d.
     """
     patterns = [
         os.path.join(
@@ -117,9 +128,9 @@ def absoltec_discover_stations(data_root: str, year: int, doy: int) -> list:
     stations: set = set()
     for pattern in patterns:
         for path in glob.glob(pattern):
-            parts = Path(path).stem.split("_")
-            if len(parts) == 3:
-                stations.add(parts[0].lower())
+            match = _ABSOLTEC_STEM_RE.match(Path(path).stem)
+            if match:
+                stations.add(match["station"].lower())
     return sorted(stations)
 
 
@@ -135,12 +146,10 @@ def absoltec_discover_days(data_root: str, year: int, station: str) -> list:
     days: set = set()
     for pattern in patterns:
         for path in glob.glob(pattern):
-            parts = Path(path).stem.split("_")
-            if len(parts) == 3:
-                try:
-                    days.add(int(parts[1]))
-                except ValueError:
-                    pass
+            match = _ABSOLTEC_STEM_RE.match(Path(path).stem)
+            # The glob's "*" also matches longer codes sharing the prefix.
+            if match and match["station"].lower() == station_lower:
+                days.add(int(match["doy"]))
     return sorted(days)
 
 
@@ -186,14 +195,30 @@ def find_tec_file(
     return matches[0] if matches else None
 
 
+def find_tec_files(
+    data_root: str, year: int, doy: int, station: str, satellite: str
+) -> list:
+    """
+    The satellite's TEC-suite file for the day plus its __dupN session shards,
+    base file first. Reading only the base file keeps one session: for a
+    station delivered as hourly archives that is about one hour of the day.
+    """
+    base = find_tec_file(data_root, year, doy, station, satellite)
+    if base is None:
+        return []
+    shard_pattern = glob.escape(base[: -len(".parquet")]) + "__dup*.parquet"
+    shards = [path for path in glob.glob(shard_pattern) if _TEC_SHARD_RE.search(path)]
+    shards.sort(key=lambda path: int(_TEC_SHARD_RE.search(path).group(1)))
+    return [base] + shards
+
+
 def tec_glob_satellites(
     data_root: str, year: int, doy: int, station: str
 ) -> list:
     """
     Return sorted satellite codes available for a station on a given day.
 
-    TEC files have 4 '_'-split stem segments: station_satellite_doy_year2d.
-    Satellite code is segment index 1.
+    TEC file stems are station_satellite_doy_year2d.
     """
     year2d = str(year)[-2:]
     folder_prefix = _tec_station_folder_prefix(station)
@@ -213,9 +238,10 @@ def tec_glob_satellites(
     satellites: set = set()
     for pattern in patterns:
         for path in glob.glob(pattern):
-            parts = Path(path).stem.split("_")
-            if len(parts) == 4:
-                satellites.add(parts[1])
+            match = _TEC_STEM_RE.match(Path(path).stem)
+            # "ufa_*" also matches files of a station named "ufa_" when asking for "ufa".
+            if match and match["station"].lower() in filename_prefixes:
+                satellites.add(match["satellite"])
     return sorted(satellites)
 
 
@@ -231,7 +257,7 @@ def tec_discover_stations(data_root: str, year: int, doy: int) -> list:
     stations: set = set()
     for pattern in patterns:
         for path in glob.glob(pattern):
-            parts = Path(path).stem.split("_")
-            if len(parts) == 4:
-                stations.add(parts[0].lower())
+            match = _TEC_STEM_RE.match(Path(path).stem)
+            if match:
+                stations.add(match["station"].lower())
     return sorted(stations)
