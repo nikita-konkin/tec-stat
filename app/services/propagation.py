@@ -27,7 +27,8 @@ from scipy.stats import t as student_t
 
 from app.config import settings
 from app.db.columns import UT, I_V, G_LON, G_LAT
-from app.db.engine import absoltec_glob_files
+from app.day_range import DayRange
+from app.db.engine import absoltec_files_for_days
 from app.models.schemas import (
     PropagationDirectResponse,
     PropagationPointAbsoltec,
@@ -38,7 +39,8 @@ from app.models.schemas import (
 )
 from app.services.absoltec import VALID_TEC_SQL, files_with_valid_tec
 from app.services.absoltec import get_raw_data as get_absoltec_raw_data
-from app.services.tec import get_tec_data
+from app.services.absoltec import get_raw_data_range as get_absoltec_raw_data_range
+from app.services.tec import get_tec_data, get_tec_data_range
 from app.db.engine import get_connection
 
 import logging
@@ -255,10 +257,63 @@ def get_raw_data_propagation_tec(
     )
 
 
+def get_raw_data_range_propagation_absoltec(
+    day_range: DayRange,
+    stations: list[str],
+    f_hz: float,
+    signal_band: Optional[SignalBandName] = None,
+    data_root: Optional[str] = None,
+) -> list[dict]:
+    """AbsolTEC raw range rows (see absoltec.get_raw_data_range) with derived parameters."""
+    rows = get_absoltec_raw_data_range(day_range, stations, data_root or settings.data_root)
+    for row in rows:
+        nt = tec_to_nt(row["tec"])
+        row.update(
+            nt=_opt_float(nt),
+            f_hz=float(f_hz),
+            signal_band=signal_band,
+            b_k=_opt_float(calculate_b_k(nt, f_hz)),
+            gdd=_opt_float(calculate_gdd(nt, f_hz)),
+        )
+    return rows
+
+
+def get_raw_data_range_propagation_tec(
+    day_range: DayRange,
+    stations: list[str],
+    observable: TecObservable,
+    f_hz: float,
+    signal_band: Optional[SignalBandName] = None,
+    data_root: Optional[str] = None,
+    satellites: Optional[list[str]] = None,
+) -> list[dict]:
+    """
+    TEC-suite raw range rows (see tec.get_tec_data_range) with derived parameters.
+
+    `tec` holds the selected observable; the other observable column is
+    dropped so each row carries one TEC value, matching /propagation/tec/raw.
+    """
+    rows = get_tec_data_range(day_range, stations, data_root or settings.data_root, satellites)
+    out = []
+    for row in rows:
+        tec_value = row.pop(observable)
+        row.pop("tec_c1p2" if observable == "tec_l1l2" else "tec_l1l2", None)
+        nt = tec_to_nt(tec_value)
+        row.update(
+            observable=observable,
+            tec=tec_value,
+            nt=_opt_float(nt),
+            f_hz=float(f_hz),
+            signal_band=signal_band,
+            b_k=_opt_float(calculate_b_k(nt, f_hz)),
+            gdd=_opt_float(calculate_gdd(nt, f_hz)),
+        )
+        out.append(row)
+    return out
+
+
 def compute_statistics_propagation_absoltec(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     station: str,
     f_hz: float,
     signal_band: Optional[SignalBandName] = None,
@@ -273,17 +328,15 @@ def compute_statistics_propagation_absoltec(
     source values without mutating the raw dataset.
     """
     root = data_root or settings.data_root
-    files = absoltec_glob_files(root, year, doy_start, doy_end, station)
+    files = absoltec_files_for_days(root, day_range.days(), station)
 
     if not files:
         logger.warning(
-            "propagation stats: no AbsolTEC files for %s %d doy %d-%d under %s",
-            station, year, doy_start, doy_end, root,
+            "propagation stats: no AbsolTEC files for %s %s..%s under %s",
+            station, day_range.start, day_range.end, root,
         )
         return PropagationStatisticsResponse(
-            year=year,
-            doy_start=doy_start,
-            doy_end=doy_end,
+            **day_range.response_fields(),
             station=station,
             alpha=alpha,
             f_hz=f_hz,
@@ -293,8 +346,8 @@ def compute_statistics_propagation_absoltec(
         )
 
     logger.info(
-        "propagation stats: %s %d doy %d-%d f=%.4g Hz — querying %d file(s)",
-        station, year, doy_start, doy_end, f_hz, len(files),
+        "propagation stats: %s %s..%s f=%.4g Hz — querying %d file(s)",
+        station, day_range.start, day_range.end, f_hz, len(files),
     )
     file_list_sql = "[" + ", ".join(f"'{f}'" for f in files) + "]"
     b_k_sql = f'SQRT(({LIGHT_SPEED} * POWER({f_hz}, 3)) / ({PROPAGATION_COEFF} * PI() * ("{I_V}" * POWER(10, 16))))'
@@ -321,9 +374,7 @@ def compute_statistics_propagation_absoltec(
     """).df()
 
     return PropagationStatisticsResponse(
-        year=year,
-        doy_start=doy_start,
-        doy_end=doy_end,
+        **day_range.response_fields(),
         station=station,
         alpha=alpha,
         f_hz=float(f_hz),

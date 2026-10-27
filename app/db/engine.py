@@ -83,8 +83,18 @@ def absoltec_glob_files(
     Return existing AbsolTEC parquet paths over [doy_start, doy_end].
     Days with no file are silently skipped.
     """
+    return absoltec_files_for_days(
+        data_root, [(year, doy) for doy in range(doy_start, doy_end + 1)], station
+    )
+
+
+def absoltec_files_for_days(data_root: str, days: list, station: str) -> list:
+    """
+    Return existing AbsolTEC parquet paths for (year, doy) days, in day order.
+    Days with no file are silently skipped.
+    """
     paths = []
-    for doy in range(doy_start, doy_end + 1):
+    for year, doy in days:
         p = find_absoltec_file(data_root, year, doy, station)
         if p is not None:
             paths.append(p)

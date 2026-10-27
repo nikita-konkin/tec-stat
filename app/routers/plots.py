@@ -21,6 +21,7 @@ from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.config import settings
+from app.day_range import DayRange
 from app.db.engine import tec_glob_satellites, find_tec_file
 from app.services.absoltec import (
     compute_statistics,
@@ -91,6 +92,14 @@ def _respond(result: PlotResult, fmt: str, filename_stem: str) -> Response:
     )
 
 
+def _doy_range(year: int, doy_start: int, doy_end: int) -> DayRange:
+    """DayRange for a plot's year/doy_start/doy_end; plots keep the DOY-only form."""
+    try:
+        return DayRange.from_doys(year, doy_start, doy_end)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 def _resolve_frequency_or_422(
     f_hz: Optional[float],
     signal_band: Optional[str],
@@ -126,7 +135,7 @@ def plot_absoltec_average(
     if doy_start > doy_end:
         raise HTTPException(422, "doy_start must be ≤ doy_end")
     root   = settings.get_absoltec_root(data_root)
-    result = compute_statistics(year, doy_start, doy_end, station, alpha, root)
+    result = compute_statistics(_doy_range(year, doy_start, doy_end), station, alpha, root)
     if not result.points:
         raise HTTPException(404, f"No data for station={station!r} "
                                   f"year={year} doy {doy_start}–{doy_end}")
@@ -204,7 +213,7 @@ def plot_absoltec_per_station_avg(
     """Average TEC per station group for a specific day (path parameter)."""
     root        = settings.get_absoltec_root(data_root)
     day_results = compute_statistics_per_station_day(
-        year, doy_start, doy_end, stations, alpha, root
+        _doy_range(year, doy_start, doy_end), stations, alpha, root
     )
     day_result = next((r for r in day_results if r.doy == doy), None)
     if day_result is None or not day_result.points:
@@ -258,9 +267,7 @@ def plot_absoltec_raw_day_by_day(
         )
 
     rows = get_raw_data_range(
-        year,
-        doy_start,
-        doy_end,
+        _doy_range(year, doy_start, doy_end),
         station_list,
         settings.get_absoltec_root(data_root),
     )
@@ -305,7 +312,7 @@ def plot_cb_average(
     if doy_start > doy_end:
         raise HTTPException(422, "doy_start must be ≤ doy_end")
     root   = settings.get_absoltec_root(data_root)
-    result = compute_statistics_cb(year, doy_start, doy_end, station, alpha, root)
+    result = compute_statistics_cb(_doy_range(year, doy_start, doy_end), station, alpha, root)
     if not result.points:
         raise HTTPException(404, f"No data for station={station!r} "
                                   f"year={year} doy {doy_start}–{doy_end}")
@@ -365,9 +372,7 @@ def plot_cb_multi_station(
         raise HTTPException(422, "Provide either station or stations")
 
     rows = get_raw_data_range_cb(
-        year,
-        doy_start,
-        doy_end,
+        _doy_range(year, doy_start, doy_end),
         station_list,
         settings.get_absoltec_root(data_root),
     )
@@ -417,9 +422,7 @@ def plot_cb_with_absoltec_day_by_day(
         raise HTTPException(422, "Provide either station or stations")
 
     rows = get_raw_data_range_cb(
-        year,
-        doy_start,
-        doy_end,
+        _doy_range(year, doy_start, doy_end),
         station_list,
         settings.get_absoltec_root(data_root),
     )
@@ -456,9 +459,7 @@ def plot_cb_vs_tec(
 ):
     """Scatter plot of CB vs AbsolTEC values."""
     rows = get_raw_data_range_cb(
-        year,
-        doy_start,
-        doy_end,
+        _doy_range(year, doy_start, doy_end),
         [station],
         settings.get_absoltec_root(data_root),
     )
@@ -492,7 +493,7 @@ def plot_cb_per_station_avg(
     """Average CB per station group for a specific day (path parameter)."""
     root        = settings.get_absoltec_root(data_root)
     day_results = compute_statistics_per_station_day_cb(
-        year, doy_start, doy_end, stations, alpha, root
+        _doy_range(year, doy_start, doy_end), stations, alpha, root
     )
     day_result = next((r for r in day_results if r.doy == doy), None)
     if day_result is None or not day_result.points:
@@ -538,9 +539,7 @@ def plot_cb_raw_day_by_day(
         raise HTTPException(422, "Provide either station or stations")
 
     rows = get_raw_data_range_cb(
-        year,
-        doy_start,
-        doy_end,
+        _doy_range(year, doy_start, doy_end),
         station_list,
         settings.get_absoltec_root(data_root),
     )
@@ -586,9 +585,7 @@ def plot_propagation_absoltec_average(
     resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
     root = settings.get_absoltec_root(data_root)
     result = compute_statistics_propagation_absoltec(
-        year=year,
-        doy_start=doy_start,
-        doy_end=doy_end,
+        day_range=_doy_range(year, doy_start, doy_end),
         station=station,
         f_hz=resolved_f_hz,
         signal_band=resolved_signal_band,

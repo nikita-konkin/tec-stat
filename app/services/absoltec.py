@@ -35,10 +35,11 @@ from app.config import settings
 from app.db.columns import UT, I_V, G_LON, G_LAT, G_Q_LON, G_Q_LAT, G_T, G_Q_T
 
 logger = logging.getLogger(__name__)
+from app.day_range import DayRange
 from app.db.engine import (
     get_connection,
     find_absoltec_file,
-    absoltec_glob_files,
+    absoltec_files_for_days,
 )
 from app.models.schemas import (
     TimeSeriesPoint,
@@ -128,9 +129,7 @@ def get_raw_data(
 
 
 def get_raw_data_range(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     stations: list[str],
     data_root: Optional[str] = None,
 ) -> list[dict]:
@@ -138,22 +137,23 @@ def get_raw_data_range(
     Return raw AbsolTEC rows across a day range and station set.
 
     Rows are concatenated by time using a synthetic ``concat_ut`` axis so
-    clients can treat the selected day interval as one continuous timeline:
-      concat_ut = (doy - doy_start) * 24 + ut
+    clients can treat the selected day interval as one continuous timeline,
+    also across New Year:
+      concat_ut = (date - date_start).days * 24 + ut
     """
     root = data_root or settings.data_root
     rows: list[dict] = []
 
     for station in stations:
         station_lower = station.lower()
-        for doy in range(doy_start, doy_end + 1):
+        for year, doy in day_range.days():
             points = get_raw_data(year, doy, station_lower, root)
             for p in points:
                 rows.append({
                     "year": year,
                     "doy": doy,
                     "station": station_lower,
-                    "concat_ut": float((doy - doy_start) * 24 + p.ut),
+                    "concat_ut": day_range.concat_hours(year, doy, p.ut),
                     "ut": p.ut,
                     "tec": p.tec,
                     "g_lon": p.g_lon,
@@ -173,9 +173,7 @@ def get_raw_data_range(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_statistics(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     station: str,
     alpha: float = settings.default_alpha,
     data_root: Optional[str] = None,
@@ -188,26 +186,26 @@ def compute_statistics(
     day-by-day loop in the original Count_statistics() with a single GROUP BY.
     """
     root = data_root or settings.data_root
-    files = absoltec_glob_files(root, year, doy_start, doy_end, station)
+    files = absoltec_files_for_days(root, day_range.days(), station)
 
     if not files:
         logger.warning(
-            "absoltec stats: no files for %s %d doy %d-%d under %s",
-            station, year, doy_start, doy_end, root,
+            "absoltec stats: no files for %s %s..%s under %s",
+            station, day_range.start, day_range.end, root,
         )
         return StatisticsResponse(
-            year=year, doy_start=doy_start, doy_end=doy_end,
+            **day_range.response_fields(),
             station=station, alpha=alpha, total_days=0, points=[],
         )
 
     logger.info(
-        "absoltec stats: %s %d doy %d-%d — querying %d file(s)",
-        station, year, doy_start, doy_end, len(files),
+        "absoltec stats: %s %s..%s — querying %d file(s)",
+        station, day_range.start, day_range.end, len(files),
     )
     df = _aggregate_by_ut(files)
 
     return StatisticsResponse(
-        year=year, doy_start=doy_start, doy_end=doy_end,
+        **day_range.response_fields(),
         station=station, alpha=alpha, total_days=len(files_with_valid_tec(files)),
         points=_build_stats_points(df, alpha),
     )
@@ -218,9 +216,7 @@ def compute_statistics(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_statistics_per_station_day(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     stations: list,
     alpha: float = settings.default_alpha,
     data_root: Optional[str] = None,
@@ -232,7 +228,7 @@ def compute_statistics_per_station_day(
     root = data_root or settings.data_root
     results = []
 
-    for doy in range(doy_start, doy_end + 1):
+    for year, doy in day_range.days():
         day_files, day_stations = [], []
         for station in stations:
             p = find_absoltec_file(root, year, doy, station)

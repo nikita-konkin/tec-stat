@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from scipy.stats import t as student_t
 
+from app.day_range import DayRange
 from app.db.columns import ABSOLTEC_COLS, I_V, UT
 from app.main import app
 from app.plotting.absoltec_plots import _smooth_valid
@@ -68,6 +69,10 @@ def data_root(tmp_path):
     return str(tmp_path)
 
 
+def _days(doy_start: int, doy_end: int) -> DayRange:
+    return DayRange.from_doys(YEAR, doy_start, doy_end)
+
+
 def _by_ut(points):
     return {p.ut: p for p in points}
 
@@ -91,7 +96,7 @@ class TestRawMissingSamples:
         assert [p.tec for p in points] == [11.0, None, None]
 
     def test_range_passes_none_through(self, data_root):
-        rows = get_raw_data_range(YEAR, 3, 3, ["aaaa"], data_root)
+        rows = get_raw_data_range(_days(3, 3), ["aaaa"], data_root)
         assert [r["tec"] for r in rows] == [None, None, None]
 
     def test_cb_raw_is_none_for_missing_tec(self, data_root):
@@ -123,7 +128,7 @@ class TestSmoothValid:
 class TestStatisticsSkipMissing:
 
     def test_absoltec_statistics(self, data_root):
-        result = compute_statistics(YEAR, 1, 4, "aaaa", data_root=data_root)
+        result = compute_statistics(_days(1, 4), "aaaa", data_root=data_root)
         # Day 3 holds only placeholders, so it is not a day with data.
         assert result.total_days == 3
         pts = _by_ut(result.points)
@@ -145,7 +150,7 @@ class TestStatisticsSkipMissing:
         assert p1.variance == pytest.approx(2.0)
 
     def test_cb_statistics(self, data_root):
-        result = compute_statistics_cb(YEAR, 1, 4, "aaaa", data_root=data_root)
+        result = compute_statistics_cb(_days(1, 4), "aaaa", data_root=data_root)
         assert result.total_days == 3
         pts = _by_ut(result.points)
         assert set(pts) == {0.0, 1.0}
@@ -156,7 +161,7 @@ class TestStatisticsSkipMissing:
         assert pts[0.0].student_ci == pytest.approx(_ci(cbs))
 
     def test_propagation_statistics(self, data_root):
-        result = compute_statistics_propagation_absoltec(YEAR, 1, 4, "aaaa", F_HZ, data_root=data_root)
+        result = compute_statistics_propagation_absoltec(_days(1, 4), "aaaa", F_HZ, data_root=data_root)
         assert result.total_days == 3
         pts = _by_ut(result.points)
         assert set(pts) == {0.0, 1.0}
@@ -168,15 +173,15 @@ class TestStatisticsSkipMissing:
         assert p0.student_ci_b_k == pytest.approx(_ci(b_ks))
 
     def test_absoltec_and_propagation_agree_on_mean_tec(self, data_root):
-        stats = _by_ut(compute_statistics(YEAR, 1, 4, "aaaa", data_root=data_root).points)
-        prop = _by_ut(compute_statistics_propagation_absoltec(YEAR, 1, 4, "aaaa", F_HZ, data_root=data_root).points)
+        stats = _by_ut(compute_statistics(_days(1, 4), "aaaa", data_root=data_root).points)
+        prop = _by_ut(compute_statistics_propagation_absoltec(_days(1, 4), "aaaa", F_HZ, data_root=data_root).points)
         assert set(stats) == set(prop)
         for ut, p in stats.items():
             assert prop[ut].n == p.n
             assert prop[ut].mean_tec == pytest.approx(p.mean_tec, abs=1e-3)
 
     def test_all_missing_range_has_no_points(self, data_root):
-        result = compute_statistics(YEAR, 3, 3, "aaaa", data_root=data_root)
+        result = compute_statistics(_days(3, 3), "aaaa", data_root=data_root)
         assert result.total_days == 0
         assert result.points == []
 
@@ -186,7 +191,7 @@ class TestStatisticsSkipMissing:
 class TestPerStationDaySkipMissing:
 
     def test_station_with_only_placeholders_is_not_found(self, data_root):
-        results = compute_statistics_per_station_day(YEAR, 3, 3, ["aaaa", "bbbb"], data_root=data_root)
+        results = compute_statistics_per_station_day(_days(3, 3), ["aaaa", "bbbb"], data_root=data_root)
         assert len(results) == 1
         assert results[0].stations_found == ["bbbb"]
         # One station left: means are defined, spread is not.
@@ -195,7 +200,7 @@ class TestPerStationDaySkipMissing:
         assert p0.variance is None and p0.std_dev is None and p0.student_ci is None
 
     def test_pools_valid_samples_across_stations(self, data_root):
-        results = compute_statistics_per_station_day(YEAR, 1, 1, ["aaaa", "bbbb"], data_root=data_root)
+        results = compute_statistics_per_station_day(_days(1, 1), ["aaaa", "bbbb"], data_root=data_root)
         pts = _by_ut(results[0].points)
         assert set(pts) == {0.0, 1.0}
         assert pts[0.0].n == 2
@@ -203,7 +208,7 @@ class TestPerStationDaySkipMissing:
         assert pts[1.0].n == 1 and pts[1.0].student_ci is None
 
     def test_cb_pools_valid_samples_across_stations(self, data_root):
-        results = compute_statistics_per_station_day_cb(YEAR, 1, 1, ["aaaa", "bbbb"], data_root=data_root)
+        results = compute_statistics_per_station_day_cb(_days(1, 1), ["aaaa", "bbbb"], data_root=data_root)
         assert results[0].stations_found == ["aaaa", "bbbb"]
         pts = _by_ut(results[0].points)
         cbs = [_calculate_cb(10.0), _calculate_cb(14.0)]
@@ -213,7 +218,7 @@ class TestPerStationDaySkipMissing:
         assert pts[1.0].n == 1 and pts[1.0].variance is None
 
     def test_cb_station_with_only_placeholders_is_not_found(self, data_root):
-        results = compute_statistics_per_station_day_cb(YEAR, 3, 3, ["aaaa", "bbbb"], data_root=data_root)
+        results = compute_statistics_per_station_day_cb(_days(3, 3), ["aaaa", "bbbb"], data_root=data_root)
         assert results[0].stations_found == ["bbbb"]
 
 

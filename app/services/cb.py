@@ -30,10 +30,11 @@ logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.db.columns import UT, I_V, G_LON, G_LAT, G_Q_LON, G_Q_LAT, G_T, G_Q_T
+from app.day_range import DayRange
 from app.db.engine import (
     get_connection,
     find_absoltec_file,
-    absoltec_glob_files,
+    absoltec_files_for_days,
 )
 from app.services.absoltec import VALID_TEC_SQL, files_with_valid_tec
 from app.services.absoltec import get_raw_data as get_absoltec_raw_data
@@ -139,9 +140,7 @@ def get_raw_data_cb(
 
 
 def get_raw_data_range_cb(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     stations: list[str],
     data_root: Optional[str] = None,
 ) -> list[dict]:
@@ -149,15 +148,13 @@ def get_raw_data_range_cb(
     Raw CB rows concatenated day-by-day for one or more stations.
 
     Time continuity across days is represented by `concat_ut`:
-      concat_ut = (doy - doy_start) * 24 + ut
+      concat_ut = (date - date_start).days * 24 + ut
     """
     # Reuse AbsolTEC raw range extraction and derive CB from its `tec` values.
     # This guarantees that if AbsolTEC raw exists, CB raw exists for the same
     # filters, and keeps the file-discovery/path logic in one place.
     base_rows = get_absoltec_raw_data_range(
-        year=year,
-        doy_start=doy_start,
-        doy_end=doy_end,
+        day_range=day_range,
         stations=stations,
         data_root=data_root,
     )
@@ -172,9 +169,7 @@ def get_raw_data_range_cb(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_statistics_cb(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     station: str,
     alpha: float = settings.default_alpha,
     data_root: Optional[str] = None,
@@ -187,26 +182,26 @@ def compute_statistics_cb(
     day-by-day loop with a single GROUP BY on CB values.
     """
     root = data_root or settings.data_root
-    files = absoltec_glob_files(root, year, doy_start, doy_end, station)
+    files = absoltec_files_for_days(root, day_range.days(), station)
 
     if not files:
         logger.warning(
-            "cb stats: no AbsolTEC files for %s %d doy %d-%d under %s",
-            station, year, doy_start, doy_end, root,
+            "cb stats: no AbsolTEC files for %s %s..%s under %s",
+            station, day_range.start, day_range.end, root,
         )
         return StatisticsResponseCB(
-            year=year, doy_start=doy_start, doy_end=doy_end,
+            **day_range.response_fields(),
             station=station, alpha=alpha, total_days=0, points=[],
         )
 
     logger.info(
-        "cb stats: %s %d doy %d-%d — querying %d file(s)",
-        station, year, doy_start, doy_end, len(files),
+        "cb stats: %s %s..%s — querying %d file(s)",
+        station, day_range.start, day_range.end, len(files),
     )
     df = _aggregate_cb_by_ut(files)
 
     return StatisticsResponseCB(
-        year=year, doy_start=doy_start, doy_end=doy_end,
+        **day_range.response_fields(),
         station=station, alpha=alpha, total_days=len(files_with_valid_tec(files)),
         points=_build_stats_points_cb(df, alpha),
     )
@@ -237,9 +232,7 @@ def _aggregate_cb_by_ut(files: list[str]) -> pd.DataFrame:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_statistics_per_station_day_cb(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     stations: list[str],
     alpha: float = settings.default_alpha,
     data_root: Optional[str] = None,
@@ -254,7 +247,7 @@ def compute_statistics_per_station_day_cb(
     root = data_root or settings.data_root
     responses = []
 
-    for doy in range(doy_start, doy_end + 1):
+    for year, doy in day_range.days():
         day_files, day_stations = [], []
         for station in stations:
             path = find_absoltec_file(root, year, doy, station)

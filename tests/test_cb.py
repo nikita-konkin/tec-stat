@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from scipy.stats import t as student_t
 
+from app.day_range import DayRange
 from app.db.columns import UT
 from app.services.cb import _calculate_cb, _build_stats_points_cb, get_raw_data_range_cb
 from app.models.schemas import TimeSeriesPointCB
@@ -152,7 +153,7 @@ class TestCBIntegration:
 
         monkeypatch.setattr("app.services.cb.get_absoltec_raw_data_range", fake_get_abs_raw_data_range)
 
-        rows = get_raw_data_range_cb(2026, 1, 2, ["alex", "alme"], "ignored")
+        rows = get_raw_data_range_cb(DayRange.from_doys(2026, 1, 2), ["alex", "alme"], "ignored")
 
         assert len(rows) == 2
         assert rows[0]["station"] == "alex"

@@ -32,6 +32,7 @@ import pyarrow.parquet as pq
 logger = logging.getLogger(__name__)
 
 from app.config import settings
+from app.day_range import DayRange, map_days
 from app.db.columns import (
     TSN, HOUR, EL, AZ,
     TEC_L1L2_RAW, TEC_C1P2_RAW,
@@ -50,6 +51,10 @@ from app.models.schemas import (
     SatelliteListResponse,
     StationMetadata,
     StationMapResponse,
+    SatelliteDays,
+    SatelliteRangeResponse,
+    StationRangeMetadata,
+    StationMapRangeResponse,
 )
 
 
@@ -109,27 +114,29 @@ def get_tec_data(
 
 
 def get_tec_data_range(
-    year: int,
-    doy_start: int,
-    doy_end: int,
+    day_range: DayRange,
     stations: list[str],
     data_root: Optional[str] = None,
+    satellites: Optional[list[str]] = None,
 ) -> list[dict]:
     """
     Return raw TEC-suite rows across a day range and station set.
 
-    Includes all satellites available for each station/day and exposes a
-    synthetic continuous time axis:
-      concat_hour = (doy - doy_start) * 24 + hour
+    Includes all satellites available for each station/day, or only those in
+    `satellites` when given, and exposes a synthetic continuous time axis:
+      concat_hour = (date - date_start).days * 24 + hour
     """
     root = data_root or settings.data_root
+    wanted = {s.upper() for s in satellites} if satellites else None
     rows: list[dict] = []
 
     for station in stations:
         station_lower = station.lower()
-        for doy in range(doy_start, doy_end + 1):
-            satellites = tec_glob_satellites(root, year, doy, station_lower)
-            for satellite in satellites:
+        for year, doy in day_range.days():
+            day_satellites = tec_glob_satellites(root, year, doy, station_lower)
+            for satellite in day_satellites:
+                if wanted is not None and satellite.upper() not in wanted:
+                    continue
                 payload = get_tec_data(year, doy, station_lower, satellite, root)
                 for p in payload.points:
                     rows.append({
@@ -137,7 +144,7 @@ def get_tec_data_range(
                         "doy": doy,
                         "station": station_lower,
                         "satellite": satellite,
-                        "concat_hour": float((doy - doy_start) * 24 + p.hour),
+                        "concat_hour": day_range.concat_hours(year, doy, p.hour),
                         "hour": p.hour,
                         "tsn": p.tsn,
                         "el": p.el,
@@ -190,6 +197,61 @@ def list_stations_with_meta(
         station_metas.append(meta)
 
     return StationMapResponse(year=year, doy=doy, stations=station_metas)
+
+
+def list_satellites_range(
+    day_range: DayRange, station: str, data_root: Optional[str] = None
+) -> SatelliteRangeResponse:
+    """Satellites seen by a station on any day of the range, with day counts."""
+    root = data_root or settings.data_root
+    per_day = map_days(lambda year, doy: tec_glob_satellites(root, year, doy, station), day_range.days())
+    counts: dict[str, int] = {}
+    for sats in per_day:
+        for sat in sats:
+            counts[sat] = counts.get(sat, 0) + 1
+    return SatelliteRangeResponse(
+        station=station,
+        date_start=day_range.start,
+        date_end=day_range.end,
+        satellites=sorted(counts),
+        satellite_days=[SatelliteDays(satellite=s, days=counts[s]) for s in sorted(counts)],
+    )
+
+
+def list_stations_with_meta_range(
+    day_range: DayRange, data_root: Optional[str] = None
+) -> StationMapRangeResponse:
+    """
+    TEC-suite stations with data on any day of the range, with coordinates.
+
+    Day discovery runs per day on a thread pool; metadata is parsed once per
+    station, from the latest day it has data, instead of once per station-day.
+    """
+    root = data_root or settings.data_root
+    days = day_range.days()
+    per_day = map_days(lambda year, doy: tec_discover_stations(root, year, doy), days)
+
+    day_counts: dict[str, int] = {}
+    last_day: dict[str, tuple[int, int]] = {}
+    for day, stations in zip(days, per_day):
+        for station in stations:
+            day_counts[station] = day_counts.get(station, 0) + 1
+            last_day[station] = day
+
+    metas = []
+    for station in sorted(day_counts):
+        meta = _station_meta_for_day(root, *last_day[station], station)
+        metas.append(StationRangeMetadata(**meta.model_dump(), days=day_counts[station]))
+
+    return StationMapRangeResponse(date_start=day_range.start, date_end=day_range.end, stations=metas)
+
+
+def _station_meta_for_day(root: str, year: int, doy: int, station: str) -> StationMetadata:
+    sats = tec_glob_satellites(root, year, doy, station)
+    path = find_tec_file(root, year, doy, station, sats[0]) if sats else None
+    if path is None:
+        return StationMetadata(station=station, has_data=False)
+    return parse_station_metadata(path, station)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

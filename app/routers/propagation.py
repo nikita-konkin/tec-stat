@@ -8,9 +8,10 @@ frequency (`f_hz`) or a supported GNSS signal-band preset (`signal_band`).
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
+from app.day_range import DayRange, day_range_query
 from app.models.schemas import (
     PropagationDirectResponse,
     PropagationPointAbsoltec,
@@ -24,6 +25,8 @@ from app.services.propagation import (
     compute_statistics_propagation_absoltec,
     get_raw_data_propagation_absoltec,
     get_raw_data_propagation_tec,
+    get_raw_data_range_propagation_absoltec,
+    get_raw_data_range_propagation_tec,
     resolve_frequency,
 )
 
@@ -42,6 +45,20 @@ def _resolve_frequency_or_422(
         return resolve_frequency(f_hz, signal_band)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+def _station_list(station: Optional[str], stations: Optional[list[str]]) -> list[str]:
+    station_list = sorted({s.lower() for s in [station, *(stations or [])] if s})
+    if not station_list:
+        raise HTTPException(422, "Provide either station or stations")
+    return station_list
+
+
+def _stations_label(station_list: list[str]) -> str:
+    label = "-".join(station_list[:3])
+    if len(station_list) > 3:
+        label += f"-plus{len(station_list)-3}"
+    return label
 
 
 @router.get("/calc", response_model=PropagationDirectResponse)
@@ -84,11 +101,41 @@ def absoltec_raw(
     )
 
 
+@router.get("/absoltec/raw/range", response_model=list[dict])
+def absoltec_raw_range(
+    day_range: DayRange = Depends(day_range_query),
+    station: Optional[str] = Query(None, min_length=2, max_length=9),
+    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    f_hz: Optional[float] = Query(None, gt=0, description="Working frequency in Hz"),
+    signal_band: Optional[str] = Query(None, description=SIGNAL_BAND_DESCRIPTION),
+    data_root: Optional[str] = Query(None, description="Override ABSOLTEC_DATA_ROOT"),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
+):
+    """
+    Raw AbsolTEC rows over a day or date range with derived propagation parameters.
+
+    Rows are those of /absoltec/raw/range (with concat_ut) plus nt, b_k, gdd,
+    f_hz and signal_band.
+    """
+    station_list = _station_list(station, stations)
+    resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
+    payload = get_raw_data_range_propagation_absoltec(
+        day_range=day_range,
+        stations=station_list,
+        f_hz=resolved_f_hz,
+        signal_band=resolved_signal_band,
+        data_root=settings.get_absoltec_root(data_root),
+    )
+    return format_payload(
+        payload,
+        format,
+        f"propagation_absoltec_raw_range_{day_range.label()}_{_stations_label(station_list)}",
+    )
+
+
 @router.get("/absoltec/statistics", response_model=PropagationStatisticsResponse)
 def absoltec_statistics(
-    year: int = Query(..., ge=2000, le=2100),
-    doy_start: int = Query(..., ge=1, le=366),
-    doy_end: int = Query(..., ge=1, le=366),
+    day_range: DayRange = Depends(day_range_query),
     station: str = Query(..., min_length=2, max_length=9),
     f_hz: Optional[float] = Query(None, gt=0, description="Working frequency in Hz"),
     signal_band: Optional[str] = Query(None, description=SIGNAL_BAND_DESCRIPTION),
@@ -96,15 +143,10 @@ def absoltec_statistics(
     data_root: Optional[str] = Query(None, description="Override ABSOLTEC_DATA_ROOT"),
     format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
-    """Mean plus Student-CI for derived propagation parameters over an AbsolTEC day range."""
-    if doy_start > doy_end:
-        raise HTTPException(422, "doy_start must be <= doy_end")
-
+    """Mean plus Student-CI for derived propagation parameters over an AbsolTEC day or date range."""
     resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
     payload = compute_statistics_propagation_absoltec(
-        year=year,
-        doy_start=doy_start,
-        doy_end=doy_end,
+        day_range=day_range,
         station=station,
         f_hz=resolved_f_hz,
         signal_band=resolved_signal_band,
@@ -114,8 +156,46 @@ def absoltec_statistics(
     return format_payload(
         payload,
         format,
-        f"propagation_absoltec_stats_{year}_{doy_start:03d}_{doy_end:03d}_{station.lower()}",
+        f"propagation_absoltec_stats_{day_range.label()}_{station.lower()}",
     )
+
+
+@router.get("/tec/raw/range", response_model=list[dict])
+def tec_raw_range(
+    day_range: DayRange = Depends(day_range_query),
+    station: Optional[str] = Query(None, min_length=2, max_length=9),
+    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    satellite: Optional[str] = Query(None, min_length=2, max_length=4, description="Only this satellite, e.g. G01"),
+    satellites: Optional[list[str]] = Query(None, description="Alternative: repeated ?satellites=... query values"),
+    observable: Literal["tec_l1l2", "tec_c1p2"] = Query("tec_l1l2"),
+    f_hz: Optional[float] = Query(None, gt=0, description="Working frequency in Hz"),
+    signal_band: Optional[str] = Query(None, description=SIGNAL_BAND_DESCRIPTION),
+    data_root: Optional[str] = Query(None, description="Override TECSUITE_DATA_ROOT"),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
+):
+    """
+    Raw TEC-suite rows over a day or date range with derived propagation parameters.
+
+    Rows are those of /tec/raw/range (with concat_hour), with `tec` holding the
+    selected observable, plus nt, b_k, gdd, f_hz and signal_band. All
+    satellites are included unless satellite/satellites narrow them.
+    """
+    station_list = _station_list(station, stations)
+    satellite_list = sorted({s.upper() for s in [satellite, *(satellites or [])] if s}) or None
+    resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
+    payload = get_raw_data_range_propagation_tec(
+        day_range=day_range,
+        stations=station_list,
+        observable=observable,
+        f_hz=resolved_f_hz,
+        signal_band=resolved_signal_band,
+        data_root=settings.get_tec_root(data_root),
+        satellites=satellite_list,
+    )
+    label = _stations_label(station_list)
+    if satellite_list:
+        label += "_" + "-".join(satellite_list[:3]).lower()
+    return format_payload(payload, format, f"propagation_tec_raw_range_{day_range.label()}_{label}")
 
 
 @router.get("/tec/raw", response_model=PropagationTecResponse)

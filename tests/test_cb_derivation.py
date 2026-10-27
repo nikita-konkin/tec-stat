@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import app.services.cb as cb_service
+from app.day_range import DayRange
 
 
 def test_get_raw_data_range_cb_derives_from_absoltec_and_adds_cb(monkeypatch):
@@ -13,9 +14,7 @@ def test_get_raw_data_range_cb_derives_from_absoltec_and_adds_cb(monkeypatch):
     monkeypatch.setattr(cb_service, "get_absoltec_raw_data_range", fake_abs_range)
 
     rows = cb_service.get_raw_data_range_cb(
-        year=2026,
-        doy_start=1,
-        doy_end=2,
+        day_range=DayRange.from_doys(2026, 1, 2),
         stations=["a", "b"],
         data_root="/data",
     )

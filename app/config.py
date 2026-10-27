@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     time_slot_step: float = 0.5        # 30-minute slots → 48 per day
     time_slots_per_day: int = 48
 
+    # ----------------------------------------------------------- day ranges
+    max_range_days: int = 366          # longest date range one request may span
+    discovery_workers: int = 8         # threads scanning days for range availability
+
     # -------------------------------------------------------------- plotting
     plot_dpi: int = 100
     plot_width_px: int = 1200

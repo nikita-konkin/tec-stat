@@ -7,6 +7,7 @@ Column naming note:
   Python model fields use snake_case aliases for clean attribute access.
 """
 
+import datetime
 from typing import Optional, Any
 from pydantic import BaseModel, Field
 
@@ -59,7 +60,9 @@ class StatisticsPoint(BaseModel):
 class StatisticsResponse(BaseModel):
     year:       int
     doy_start:  int
-    doy_end:    int
+    doy_end:    int = Field(..., description="DOY of the last day, in date_end's year")
+    date_start: Optional[datetime.date] = Field(None, description="First day of the range")
+    date_end:   Optional[datetime.date] = Field(None, description="Last day of the range")
     station:    str
     alpha:      float
     total_days: int = Field(..., description="Days with actual data found in the range")
@@ -123,7 +126,9 @@ class StatisticsPointCB(BaseModel):
 class StatisticsResponseCB(BaseModel):
     year:       int
     doy_start:  int
-    doy_end:    int
+    doy_end:    int = Field(..., description="DOY of the last day, in date_end's year")
+    date_start: Optional[datetime.date] = Field(None, description="First day of the range")
+    date_end:   Optional[datetime.date] = Field(None, description="Last day of the range")
     station:    str
     alpha:      float
     total_days: int = Field(..., description="Days with actual data found in the range")
@@ -197,7 +202,9 @@ class PropagationStatisticsPoint(BaseModel):
 class PropagationStatisticsResponse(BaseModel):
     year:       int
     doy_start:  int
-    doy_end:    int
+    doy_end:    int = Field(..., description="DOY of the last day, in date_end's year")
+    date_start: Optional[datetime.date] = Field(None, description="First day of the range")
+    date_end:   Optional[datetime.date] = Field(None, description="Last day of the range")
     station:    str
     alpha:      float
     f_hz:       float
@@ -292,6 +299,51 @@ class StationMapResponse(BaseModel):
     year:     int
     doy:      int
     stations: list[StationMetadata]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Availability over a date range
+# ──────────────────────────────────────────────────────────────────────────────
+
+class SatelliteDays(BaseModel):
+    satellite: str
+    days:      int = Field(..., description="Days in the range with a file for this satellite")
+
+
+class SatelliteRangeResponse(BaseModel):
+    station:        str
+    date_start:     datetime.date
+    date_end:       datetime.date
+    satellites:     list[str]
+    satellite_days: list[SatelliteDays]
+
+
+class StationRangeMetadata(StationMetadata):
+    """Station coordinates (from its latest day in the range) plus how many days it has data."""
+    days: int = Field(..., description="Days in the range with TEC-suite data for this station")
+
+
+class StationMapRangeResponse(BaseModel):
+    date_start: datetime.date
+    date_end:   datetime.date
+    stations:   list[StationRangeMetadata]
+
+
+class StationDays(BaseModel):
+    station:       str
+    absoltec_days: Optional[int] = Field(None, description="Days with AbsolTEC files; None when not requested")
+    tec_days:      Optional[int] = Field(None, description="Days with TEC-suite files; None when not requested")
+
+
+class StationAvailabilityRangeResponse(BaseModel):
+    date_start:        datetime.date
+    date_end:          datetime.date
+    source:            str
+    days_in_range:     int
+    absoltec_stations: Optional[list[str]] = None
+    tec_stations:      Optional[list[str]] = None
+    all_stations:      Optional[list[str]] = None
+    station_days:      list[StationDays]
 
 
 # ──────────────────────────────────────────────────────────────────────────────

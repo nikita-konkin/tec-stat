@@ -19,12 +19,13 @@ def test_absoltec_raw_range_requires_station_or_stations():
 
 
 def test_absoltec_raw_range_station_json(monkeypatch):
-    def fake_get_raw_data_range(year, doy_start, doy_end, stations, data_root):
+    def fake_get_raw_data_range(day_range, stations, data_root):
+        assert (day_range.year, day_range.doy_start, day_range.doy_end) == (2026, 1, 2)
         assert stations == ["aksu"]
         return [
             {
-                "year": year,
-                "doy": doy_start,
+                "year": day_range.year,
+                "doy": day_range.doy_start,
                 "station": "aksu",
                 "concat_ut": 0.0,
                 "ut": 0.0,
@@ -54,12 +55,13 @@ def test_absoltec_raw_range_station_json(monkeypatch):
 
 
 def test_tec_raw_range_with_multiple_stations(monkeypatch):
-    def fake_get_tec_data_range(year, doy_start, doy_end, stations, data_root):
+    def fake_get_tec_data_range(day_range, stations, data_root, satellites):
         assert stations == ["aksu", "arsk"]
+        assert satellites is None
         return [
             {
-                "year": year,
-                "doy": doy_start,
+                "year": day_range.year,
+                "doy": day_range.doy_start,
                 "station": "aksu",
                 "satellite": "G24",
                 "concat_hour": 0.0,
@@ -89,7 +91,7 @@ def test_tec_raw_range_with_multiple_stations(monkeypatch):
 
 
 def test_plot_absoltec_raw_day_by_day_json(monkeypatch):
-    def fake_get_raw_data_range(year, doy_start, doy_end, stations, data_root):
+    def fake_get_raw_data_range(day_range, stations, data_root):
         return [
             {"station": "aksu", "concat_ut": 0.0, "tec": 10.0, "g_lon": 54.8},
             {"station": "aksu", "concat_ut": 0.5, "tec": 10.2, "g_lon": 54.9},

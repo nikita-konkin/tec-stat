@@ -8,10 +8,11 @@ Uses settings.get_absoltec_root() so the data path is resolved with the
 correct priority: query-param override → ABSOLTEC_DATA_ROOT → DATA_ROOT.
 """
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException
 from typing import Optional
 
 from app.config import settings
+from app.day_range import DayRange, day_range_query
 from app.db.engine import absoltec_discover_stations, absoltec_discover_days
 from app.routers.export import ExportFormat, format_payload
 from app.services.cb import (
@@ -68,9 +69,7 @@ def raw_data(
 
 @router.get("/raw/range", response_model=list[dict])
 def raw_data_range(
-    year:      int = Query(..., ge=2000, le=2100),
-    doy_start: int = Query(..., ge=1,    le=366),
-    doy_end:   int = Query(..., ge=1,    le=366),
+    day_range: DayRange = Depends(day_range_query),
     station:   Optional[str] = Query(None, min_length=2, max_length=9),
     stations:  Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
     data_root: Optional[str] = Query(None),
@@ -79,12 +78,11 @@ def raw_data_range(
     """
     Raw CB rows concatenated day-by-day for one or more stations.
 
-    Time continuity across days is represented by `concat_ut`:
-      concat_ut = (doy - doy_start) * 24 + ut
+    Give the range as year + doy_start + doy_end, or as date_start + date_end
+    (which may cross New Year). Time continuity across days is represented by
+    `concat_ut`:
+      concat_ut = (date - date_start).days * 24 + ut
     """
-    if doy_start > doy_end:
-        raise HTTPException(422, "doy_start must be ≤ doy_end")
-
     station_list: list[str] = []
     if station:
         station_list.append(station)
@@ -95,9 +93,7 @@ def raw_data_range(
         raise HTTPException(422, "Provide either station or stations")
 
     payload = get_raw_data_range_cb(
-        year,
-        doy_start,
-        doy_end,
+        day_range,
         station_list,
         settings.get_absoltec_root(data_root),
     )
@@ -107,50 +103,42 @@ def raw_data_range(
     return format_payload(
         payload,
         format,
-        f"cb_raw_range_{year}_{doy_start:03d}_{doy_end:03d}_{filename_stations}",
+        f"cb_raw_range_{day_range.label()}_{filename_stations}",
     )
 
 
 @router.get("/statistics", response_model=StatisticsResponseCB)
 def statistics(
-    year:      int   = Query(..., ge=2000, le=2100),
-    doy_start: int   = Query(..., ge=1,    le=366),
-    doy_end:   int   = Query(..., ge=1,    le=366),
+    day_range: DayRange = Depends(day_range_query),
     station:   str   = Query(..., min_length=2, max_length=9),
     alpha:     float = Query(settings.default_alpha, ge=0.001, le=0.5),
     data_root: Optional[str] = Query(None),
     format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
-    """Mean ± Student-CI for CB values of a station over a day range."""
-    if doy_start > doy_end:
-        raise HTTPException(422, "doy_start must be ≤ doy_end")
-    payload = compute_statistics_cb(year, doy_start, doy_end, station, alpha,
+    """Mean ± Student-CI for CB values of a station over a day or date range."""
+    payload = compute_statistics_cb(day_range, station, alpha,
                                     settings.get_absoltec_root(data_root))
     return format_payload(
         payload,
         format,
-        f"cb_stats_{year}_{doy_start:03d}_{doy_end:03d}_{station.lower()}",
+        f"cb_stats_{day_range.label()}_{station.lower()}",
     )
 
 
 @router.get("/statistics/per-station-day", response_model=list)
 def statistics_per_station_day(
-    year:      int  = Query(..., ge=2000, le=2100),
-    doy_start: int  = Query(..., ge=1,    le=366),
-    doy_end:   int  = Query(..., ge=1,    le=366),
+    day_range: DayRange = Depends(day_range_query),
     stations:  list[str] = Query(...),
     alpha:     float = Query(settings.default_alpha, ge=0.001, le=0.5),
     data_root: Optional[str] = Query(None),
     format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
-    """Per-day CB statistics averaged across a list of stations."""
-    if doy_start > doy_end:
-        raise HTTPException(422, "doy_start must be ≤ doy_end")
+    """Per-day CB statistics averaged across a list of stations, over a day or date range."""
     payload = compute_statistics_per_station_day_cb(
-        year, doy_start, doy_end, stations, alpha,
+        day_range, stations, alpha,
         settings.get_absoltec_root(data_root))
     return format_payload(
         payload,
         format,
-        f"cb_stats_per_station_day_{year}_{doy_start:03d}_{doy_end:03d}",
+        f"cb_stats_per_station_day_{day_range.label()}",
     )
