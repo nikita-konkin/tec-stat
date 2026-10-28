@@ -346,6 +346,32 @@ class StationAvailabilityRangeResponse(BaseModel):
     station_days:      list[StationDays]
 
 
+class NearbyStation(BaseModel):
+    station:       str
+    lat:           float
+    lon:           float
+    distance_km:   Optional[float] = Field(None, description="From the area centre; None for a bbox")
+    absoltec_days: int = Field(..., description="Days in the range with AbsolTEC files")
+    tec_days:      int = Field(..., description="Days in the range with TEC-suite files")
+
+
+class AreaCentre(BaseModel):
+    lat:     float
+    lon:     float
+    station: Optional[str] = Field(None, description="Set when the centre is a station")
+
+
+class NearbyStationsResponse(BaseModel):
+    date_start:    datetime.date
+    date_end:      datetime.date
+    source:        str
+    centre:        Optional[AreaCentre] = None
+    radius_km:     Optional[float] = None
+    bbox:          Optional[list[float]] = Field(None, description="lon_min, lat_min, lon_max, lat_max")
+    station_count: int
+    stations:      list[NearbyStation] = Field(..., description="Nearest first; by code for a bbox")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Plot data / script schemas
 # ──────────────────────────────────────────────────────────────────────────────

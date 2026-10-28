@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     max_range_days: int = 366          # longest date range one request may span
     discovery_workers: int = 8         # threads scanning days for range availability
 
+    # ------------------------------------------------------ area selection
+    max_area_stations: int = 200       # most stations a near=/bbox= selection may resolve to
+    station_positions_ttl_sec: float = 3600.0  # how long a range's station positions are reused
+
     # -------------------------------------------------------------- plotting
     plot_dpi: int = 100
     plot_width_px: int = 1200

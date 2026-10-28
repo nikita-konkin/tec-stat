@@ -4,12 +4,13 @@ TEC-suite HTTP router.
 Uses settings.get_tec_root() for path resolution.
 """
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from typing import Optional
 
 from app.config import settings
 from app.day_range import DayRange, day_range_query
 from app.routers.export import ExportFormat, format_payload
+from app.station_selection import station_selection
 from app.services.tec import (
     get_tec_data,
     get_tec_data_range,
@@ -85,8 +86,7 @@ def satellite_data(
 @router.get("/raw/range", response_model=list[dict])
 def satellite_data_range(
     day_range: DayRange = Depends(day_range_query),
-    station:   Optional[str] = Query(None, min_length=2, max_length=9),
-    stations:  Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    station_list: list[str] = Depends(station_selection("tec")),
     satellite: Optional[str] = Query(None, min_length=2, max_length=4, description="Only this satellite, e.g. G01"),
     satellites: Optional[list[str]] = Query(None, description="Alternative: repeated ?satellites=... query values"),
     data_root: Optional[str] = Query(None),
@@ -99,17 +99,10 @@ def satellite_data_range(
     satellite/satellites, and provides a continuous timeline:
       concat_hour = (date - date_start).days * 24 + hour
     Give the range as year + doy_start + doy_end, or as date_start + date_end
-    (which may cross New Year).
+    (which may cross New Year). Stations are listed (station, stations) or
+    chosen by area (near + radius_km, or bbox); an area keeps stations with
+    TEC-suite data.
     """
-    station_list: list[str] = []
-    if station:
-        station_list.append(station)
-    if stations:
-        station_list.extend(stations)
-    station_list = sorted({s.lower() for s in station_list if s})
-    if not station_list:
-        raise HTTPException(422, "Provide either station or stations")
-
     satellite_list = sorted({s.upper() for s in [satellite, *(satellites or [])] if s}) or None
 
     payload = get_tec_data_range(

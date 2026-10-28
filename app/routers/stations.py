@@ -10,16 +10,25 @@ Endpoints:
   GET /stations/available/range   → same, over a day or date range, with day counts
   GET /stations/map               → station list with coordinates (TEC-suite metadata)
   GET /stations/map/range         → same, over a day or date range, with day counts
+  GET /stations/nearby            → stations within a radius or box, with distances
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, Literal
 
 from app.config import settings
 from app.day_range import DayRange, day_range_query, map_days
 from app.db.engine import absoltec_discover_stations, tec_discover_stations
-from app.models.schemas import StationAvailabilityRangeResponse, StationDays, StationMapRangeResponse
+from app.models.schemas import (
+    AreaCentre,
+    NearbyStation,
+    NearbyStationsResponse,
+    StationAvailabilityRangeResponse,
+    StationDays,
+    StationMapRangeResponse,
+)
 from app.routers.export import ExportFormat, format_payload
+from app.services.area import has_source_data, resolve_area, stations_in_area
 from app.services.tec import list_stations_with_meta, list_stations_with_meta_range
 
 SourceName = Literal["absoltec", "tec", "both"]
@@ -149,3 +158,45 @@ def station_map(
     root = settings.get_tec_root(data_root)
     payload = list_stations_with_meta(year, doy, root)
     return format_payload(payload, format, f"stations_map_{year}_{doy:03d}")
+
+@router.get("/nearby", response_model=NearbyStationsResponse)
+def nearby_stations(
+    day_range: DayRange = Depends(day_range_query),
+    near: Optional[str] = Query(
+        None, description="Area centre as 'lat,lon' or a station code (e.g. kazn); use with radius_km"
+    ),
+    radius_km: Optional[float] = Query(None, gt=0, le=5000, description="Radius around `near` (km)"),
+    bbox: Optional[str] = Query(None, description="Area box as lon_min,lat_min,lon_max,lat_max"),
+    source: SourceName = Query("both", description="Keep stations with this data type; " + SOURCE_DESCRIPTION),
+    data_root: Optional[str] = Query(None),
+    format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
+):
+    """
+    Stations with data in a day or date range inside an area: within
+    radius_km of a point or station (nearest first, with distances), or
+    inside a box. Coordinates come from the TEC-suite headers. The same
+    near/radius_km/bbox parameters select stations on every range endpoint.
+    """
+    tec_root = settings.get_tec_root(data_root)
+    try:
+        area = resolve_area(day_range, tec_root, near=near, radius_km=radius_km, bbox=bbox)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    found = stations_in_area(day_range, area, tec_root=tec_root, absoltec_root=settings.get_absoltec_root(data_root))
+    wanted = "any" if source == "both" else source
+    stations = [s for s in found if has_source_data(s, wanted)]
+
+    payload = NearbyStationsResponse(
+        date_start=day_range.start,
+        date_end=day_range.end,
+        source=source,
+        centre=AreaCentre(lat=area.lat, lon=area.lon, station=area.centre_station) if area.lat is not None else None,
+        radius_km=area.radius_km,
+        bbox=list(area.bbox) if area.bbox else None,
+        station_count=len(stations),
+        stations=[NearbyStation(**vars(s)) for s in stations],
+    )
+    return format_payload(payload, format, f"stations_nearby_{day_range.label()}")

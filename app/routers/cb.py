@@ -8,13 +8,14 @@ Uses settings.get_absoltec_root() so the data path is resolved with the
 correct priority: query-param override → ABSOLTEC_DATA_ROOT → DATA_ROOT.
 """
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from typing import Optional
 
 from app.config import settings
 from app.day_range import DayRange, day_range_query
 from app.db.engine import absoltec_discover_stations, absoltec_discover_days
 from app.routers.export import ExportFormat, format_payload
+from app.station_selection import station_selection
 from app.services.cb import (
     get_raw_data_cb,
     get_raw_data_range_cb,
@@ -70,8 +71,7 @@ def raw_data(
 @router.get("/raw/range", response_model=list[dict])
 def raw_data_range(
     day_range: DayRange = Depends(day_range_query),
-    station:   Optional[str] = Query(None, min_length=2, max_length=9),
-    stations:  Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    station_list: list[str] = Depends(station_selection("absoltec")),
     data_root: Optional[str] = Query(None),
     format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),
 ):
@@ -82,16 +82,10 @@ def raw_data_range(
     (which may cross New Year). Time continuity across days is represented by
     `concat_ut`:
       concat_ut = (date - date_start).days * 24 + ut
-    """
-    station_list: list[str] = []
-    if station:
-        station_list.append(station)
-    if stations:
-        station_list.extend(stations)
-    station_list = sorted({s.lower() for s in station_list if s})
-    if not station_list:
-        raise HTTPException(422, "Provide either station or stations")
 
+    Stations are listed (station, stations) or chosen by area (near +
+    radius_km, or bbox); an area keeps stations with AbsolTEC data.
+    """
     payload = get_raw_data_range_cb(
         day_range,
         station_list,
@@ -128,7 +122,7 @@ def statistics(
 @router.get("/statistics/per-station-day", response_model=list)
 def statistics_per_station_day(
     day_range: DayRange = Depends(day_range_query),
-    stations:  list[str] = Query(...),
+    stations:  list[str] = Depends(station_selection("absoltec")),
     alpha:     float = Query(settings.default_alpha, ge=0.001, le=0.5),
     data_root: Optional[str] = Query(None),
     format: ExportFormat = Query("json", description="Response format: json, csv, xlsx"),

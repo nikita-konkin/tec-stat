@@ -19,6 +19,7 @@ from app.models.schemas import (
     PropagationTecResponse,
 )
 from app.routers.export import ExportFormat, format_payload
+from app.station_selection import station_selection
 from app.services.propagation import (
     SUPPORTED_SIGNAL_BANDS,
     calculate_propagation,
@@ -45,13 +46,6 @@ def _resolve_frequency_or_422(
         return resolve_frequency(f_hz, signal_band)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-def _station_list(station: Optional[str], stations: Optional[list[str]]) -> list[str]:
-    station_list = sorted({s.lower() for s in [station, *(stations or [])] if s})
-    if not station_list:
-        raise HTTPException(422, "Provide either station or stations")
-    return station_list
 
 
 def _stations_label(station_list: list[str]) -> str:
@@ -104,8 +98,7 @@ def absoltec_raw(
 @router.get("/absoltec/raw/range", response_model=list[dict])
 def absoltec_raw_range(
     day_range: DayRange = Depends(day_range_query),
-    station: Optional[str] = Query(None, min_length=2, max_length=9),
-    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    station_list: list[str] = Depends(station_selection("absoltec")),
     f_hz: Optional[float] = Query(None, gt=0, description="Working frequency in Hz"),
     signal_band: Optional[str] = Query(None, description=SIGNAL_BAND_DESCRIPTION),
     data_root: Optional[str] = Query(None, description="Override ABSOLTEC_DATA_ROOT"),
@@ -115,9 +108,9 @@ def absoltec_raw_range(
     Raw AbsolTEC rows over a day or date range with derived propagation parameters.
 
     Rows are those of /absoltec/raw/range (with concat_ut) plus nt, b_k, gdd,
-    f_hz and signal_band.
+    f_hz and signal_band. Stations are listed (station, stations) or chosen
+    by area (near + radius_km, or bbox).
     """
-    station_list = _station_list(station, stations)
     resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
     payload = get_raw_data_range_propagation_absoltec(
         day_range=day_range,
@@ -163,8 +156,7 @@ def absoltec_statistics(
 @router.get("/tec/raw/range", response_model=list[dict])
 def tec_raw_range(
     day_range: DayRange = Depends(day_range_query),
-    station: Optional[str] = Query(None, min_length=2, max_length=9),
-    stations: Optional[list[str]] = Query(None, description="Alternative: repeated ?stations=... query values"),
+    station_list: list[str] = Depends(station_selection("tec")),
     satellite: Optional[str] = Query(None, min_length=2, max_length=4, description="Only this satellite, e.g. G01"),
     satellites: Optional[list[str]] = Query(None, description="Alternative: repeated ?satellites=... query values"),
     observable: Literal["tec_l1l2", "tec_c1p2"] = Query("tec_l1l2"),
@@ -179,8 +171,9 @@ def tec_raw_range(
     Rows are those of /tec/raw/range (with concat_hour), with `tec` holding the
     selected observable, plus nt, b_k, gdd, f_hz and signal_band. All
     satellites are included unless satellite/satellites narrow them.
+    Stations are listed (station, stations) or chosen by area (near +
+    radius_km, or bbox).
     """
-    station_list = _station_list(station, stations)
     satellite_list = sorted({s.upper() for s in [satellite, *(satellites or [])] if s}) or None
     resolved_f_hz, resolved_signal_band = _resolve_frequency_or_422(f_hz, signal_band)
     payload = get_raw_data_range_propagation_tec(
